@@ -84,12 +84,36 @@ document.getElementById("downloadBtn").addEventListener("click", () => {
     });
 });
 
+// Add this with your other button handlers
+document.getElementById("analyzeBtn").addEventListener("click", () => {
+    console.log("Analyze button clicked");
+    chrome.runtime.sendMessage({ action: "processEvents" }, (response) => {
+        if (response) {
+            console.log("Analysis complete:", response);
+            // Create and download the analysis report
+            let analysisData = JSON.stringify(response, null, 2);
+            let blob = new Blob([analysisData], { type: "application/json" });
+            let url = URL.createObjectURL(blob);
+            let a = document.createElement("a");
+            a.href = url;
+            a.download = "session_analysis.json";
+            a.click();
+            URL.revokeObjectURL(url);
+            document.getElementById("status").textContent = "Analysis complete and downloaded";
+        } else {
+            console.error("Analysis failed");
+            document.getElementById("status").textContent = "Error analyzing session data";
+        }
+    });
+});
+
 function setContentReady(tabId) {
     contentReady = true;
     contentTabId = tabId;
     document.getElementById("startBtn").disabled = false;
     document.getElementById("stopBtn").disabled = false;
     document.getElementById("downloadBtn").disabled = false;
+    document.getElementById("analyzeBtn").disabled = false;
     document.getElementById("status").textContent = "Ready to record.";
 }
 
@@ -104,6 +128,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 document.getElementById("startBtn").disabled = true;
 document.getElementById("stopBtn").disabled = true;
 document.getElementById("downloadBtn").disabled = true;
+document.getElementById("analyzeBtn").disabled = true;
 
 // Get the current tab when popup opens, and check if the content script is already there.
 chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {

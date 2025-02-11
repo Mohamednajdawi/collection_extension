@@ -143,6 +143,55 @@ function attachListeners(resuming) {
   document.addEventListener('change', recordEvent, true);
   document.addEventListener('submit', recordEvent, true);
 
+  // Add paste event listener
+  document.addEventListener('paste', function(e) {
+    if (recording) {
+      const pastedText = e.clipboardData.getData('text');
+      const targetInfo = e.target.tagName.toLowerCase() +
+        (e.target.id ? '#' + e.target.id : '') +
+        (e.target.className ? '.' + e.target.className.replace(/ /g, '.') : '');
+
+      const eventData = {
+        type: 'paste',
+        timestamp: new Date().toISOString(),
+        pastedText: pastedText,
+        targetInfo: targetInfo,
+        url: window.location.href
+      };
+
+      chrome.runtime.sendMessage({ action: "recordEvent", eventData });
+    }
+  });
+
+  // Enhance keydown event listener to capture text input
+  document.addEventListener('keydown', function(e) {
+    if (recording) {
+      const targetInfo = e.target.tagName.toLowerCase() +
+        (e.target.id ? '#' + e.target.id : '') +
+        (e.target.className ? '.' + e.target.className.replace(/ /g, '.') : '') +
+        (e.target.type ? '[type="' + e.target.type + '"]' : '');
+
+      // Create event data with detailed text information
+      const eventData = {
+        type: 'keydown',
+        timestamp: new Date().toISOString(),
+        key: e.key,
+        targetInfo: targetInfo,
+        url: window.location.href,
+        isTextInput: e.target.tagName === 'INPUT' || 
+                    e.target.tagName === 'TEXTAREA' || 
+                    e.target.isContentEditable,
+        inputValue: e.target.value || e.target.textContent || '',
+        // Add cursor position for more detailed analysis
+        cursorPosition: getCursorPosition(e.target),
+        // Add field identifier
+        fieldIdentifier: getFieldIdentifier(e.target)
+      };
+
+      chrome.runtime.sendMessage({ action: "recordEvent", eventData });
+    }
+  });
+
   if (resuming) {
     console.log("Resuming recording. All event listeners re-attached.");
   } else {
@@ -273,4 +322,23 @@ function getElementTreeXPath(element) {
   }
 
   return paths.length ? "/" + paths.join("/") : null;
+}
+
+// Helper function to get cursor position
+function getCursorPosition(element) {
+    if (element.selectionStart !== undefined) {
+        return element.selectionStart;
+    } else if (window.getSelection) {
+        const selection = window.getSelection();
+        if (selection.rangeCount > 0) {
+            const range = selection.getRangeAt(0);
+            return range.startOffset;
+        }
+    }
+    return null;
+}
+
+// Helper function to get a unique identifier for the input field
+function getFieldIdentifier(element) {
+    return `${element.tagName.toLowerCase()}${element.id ? '#' + element.id : ''}${element.name ? '[name=' + element.name + ']' : ''}`;
 }
