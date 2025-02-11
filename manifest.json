@@ -1,0 +1,28 @@
+{
+    "manifest_version": 3,
+    "name": "Session Recorder",
+    "version": "1.0",
+    "description": "Records keyboard and mouse events in the current session when started.",
+    "permissions": [
+        "activeTab",
+        "scripting",
+        "storage"
+    ],
+    "action": {
+        "default_popup": "popup.html"
+    },
+    "background": {
+        "service_worker": "background.js"
+    },
+    "content_scripts": [
+        {
+            "matches": [
+                "<all_urls>"
+            ],
+            "js": [
+                "content.js"
+            ],
+            "run_at": "document_end"
+        }
+    ]
+}

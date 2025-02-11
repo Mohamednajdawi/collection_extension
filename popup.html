@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Session Recorder</title>
+  <style>
+    body {
+      padding: 10px;
+      min-width: 200px;
+    }
+    button {
+      width: 100%;
+      margin: 5px 0;
+      padding: 8px;
+      cursor: pointer;
+    }
+    #status {
+      color: #666;
+      margin: 10px 0;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <button id="startBtn" disabled>Start Recording</button>
+  <button id="stopBtn" disabled>Stop Recording</button>
+  <button id="downloadBtn" disabled>Download Log</button>
+  <div id="status"></div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
