@@ -234,10 +234,14 @@ function processEventLog(events) {
 
             // Store field metadata if we haven't already
             if (!stats.textStats.fieldMetadata[fieldId]) {
+                // Extract the last element of targetInfo
+                const targetInfoParts = event.targetInfo.split(',');
+                const lastTargetInfo = targetInfoParts[targetInfoParts.length - 1].trim();
+
                 stats.textStats.fieldMetadata[fieldId] = {
                     tabName: event.tabName,
                     url: event.url,
-                    targetInfo: event.targetInfo,
+                    targetInfo: lastTargetInfo, // Use the extracted value
                     firstInteraction: event.timestamp
                 };
             }
