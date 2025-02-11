@@ -1,185 +1,249 @@
 let recording = false;
-let eventsLog = [];
 
 // Generic event handler that records details from events.
 function recordEvent(e) {
-  try {
-    if (!recording) {
-      console.warn("Received event while not recording:", e.type);
-      return;
-    }
+  chrome.storage.local.get(["recording"], (result) => { // Only check if recording
+    if (result.recording) {
+      let eventData = {
+        type: e.type,
+        timestamp: new Date().toISOString(),
+        target: getElementXPath(e.target),
+        targetInfo: getTargetInfo(e.target),
+        url: window.location.href,
+        tabName: document.title
+      };
 
-    let eventData = {
-      type: e.type,
-      timestamp: Date.now(),
-      target: getElementXPath(e.target)
-    };
-
-    // For keyboard events
-    if (e.type.startsWith("key")) {
-      eventData.key = e.key;
-      eventData.code = e.code;
-      eventData.ctrlKey = e.ctrlKey;
-      eventData.shiftKey = e.shiftKey;
-      eventData.altKey = e.altKey;
-      eventData.metaKey = e.metaKey;
-      eventData.repeat = e.repeat;
-      eventData.location = e.location;
-    }
-
-    // For mouse events
-    if (e.type.startsWith("mouse") || e.type === "click") {
-      eventData.x = e.clientX;
-      eventData.y = e.clientY;
-      eventData.screenX = e.screenX;
-      eventData.screenY = e.screenY;
-      eventData.button = e.button;
-      eventData.ctrlKey = e.ctrlKey;
-      eventData.shiftKey = e.shiftKey;
-      eventData.altKey = e.altKey;
-      eventData.metaKey = e.metaKey;
-      eventData.movementX = e.movementX;
-      eventData.movementY = e.movementY;
-      eventData.offsetX = e.offsetX;
-      eventData.offsetY = e.offsetY;
-      if (e.relatedTarget) {
-        eventData.relatedTarget = getElementXPath(e.relatedTarget);
+      // For keyboard events
+      if (e.type === "keydown" || e.type === "keyup") {
+        eventData.key = e.key;
+        eventData.code = e.code;
       }
-    }
 
-    // For scroll events
-    if (e.type === 'scroll') {
-      eventData.scrollX = window.scrollX;
-      eventData.scrollY = window.scrollY;
-      eventData.scrollLeft = e.target.scrollLeft;
-      eventData.scrollTop = e.target.scrollTop;
-    }
-
-    // For form events
-    if (e.type === 'input' || e.type === 'change') {
-      if (e.target.tagName.toLowerCase() === 'select') {
-        eventData.value = e.target.options[e.target.selectedIndex].value;
-      } else if (e.target.type === 'checkbox' || e.target.type === 'radio') {
-        eventData.value = e.target.checked;
-      } else {
-        eventData.value = e.target.value;
+      // For click events
+      if (e.type === "click") {
+        eventData.clickX = e.clientX;
+        eventData.clickY = e.clientY;
+        eventData.targetTag = e.target.tagName;
+        eventData.targetId = e.target.id;
+        eventData.targetClasses = Array.from(e.target.classList);
+        eventData.targetRoles = e.target.getAttribute('role') ? [e.target.getAttribute('role')] : [];
       }
-    }
 
-    eventsLog.push(eventData);
-    console.log(`Event recorded (${e.type}). Total events: ${eventsLog.length}`, eventData);
-  } catch (error) {
-    console.error("Error recording event:", error);
-  }
+      // For mouse events
+      if (e.type.startsWith("mouse") || e.type === "click") {
+        eventData.x = e.clientX;
+        eventData.y = e.clientY;
+        eventData.screenX = e.screenX;
+        eventData.screenY = e.screenY;
+        eventData.button = e.button;
+        eventData.ctrlKey = e.ctrlKey;
+        eventData.shiftKey = e.shiftKey;
+        eventData.altKey = e.altKey;
+        eventData.metaKey = e.metaKey;
+        eventData.movementX = e.movementX;
+        eventData.movementY = e.movementY;
+        eventData.offsetX = e.offsetX;
+        eventData.offsetY = e.offsetY;
+        if (e.relatedTarget) {
+          eventData.relatedTarget = getElementXPath(e.relatedTarget);
+        }
+      }
+
+      // For scroll events
+      if (e.type === 'scroll') {
+        eventData.scrollX = window.scrollX;
+        eventData.scrollY = window.scrollY;
+        eventData.scrollLeft = e.target.scrollLeft;
+        eventData.scrollTop = e.target.scrollTop;
+      }
+
+      // For form events
+      if (e.type === 'input' || e.type === 'change') {
+        if (e.target.tagName.toLowerCase() === 'select') {
+          eventData.value = e.target.options[e.target.selectedIndex].value;
+        } else if (e.target.type === 'checkbox' || e.target.type === 'radio') {
+          eventData.value = e.target.checked;
+        } else {
+          eventData.value = e.target.value;
+        }
+      }
+
+      // Send the event data to the background script
+      chrome.runtime.sendMessage({ action: "recordEvent", eventData: eventData });
+    }
+  });
 }
 
-// Attach listeners when recording starts.
-function startRecording() {
-  try {
-    if (recording) {
-      console.log("Recording already in progress");
-      return;
-    }
-    console.log("Starting recording...");
-    recording = true;
-    eventsLog = [];
-
-    // Mouse Events
-    document.addEventListener('click', recordEvent, true);
-    document.addEventListener('mousedown', recordEvent, true);
-    document.addEventListener('mouseup', recordEvent, true);
-    document.addEventListener('mousemove', recordEvent, true);
-    document.addEventListener('contextmenu', recordEvent, true);
-
-    // Keyboard Events
-    document.addEventListener('keydown', recordEvent, true);
-    document.addEventListener('keyup', recordEvent, true);
-
-    // Scroll event
-    document.addEventListener('scroll', recordEvent, true);
-    
-    //Form Events
-    document.addEventListener('input', recordEvent, true);
-    document.addEventListener('change', recordEvent, true);
-    document.addEventListener('submit', recordEvent, true);
-
-    console.log("Recording started successfully. All event listeners attached.");
-  } catch (error) {
-    console.error("Error starting recording:", error);
-    recording = false;
-    throw error;
+// Add URL change detection using History API
+let lastUrl = window.location.href;
+new MutationObserver(() => {
+  const url = window.location.href;
+  if (url !== lastUrl) {
+    lastUrl = url;
+    console.log("URL changed to:", url);
+    chrome.storage.local.get(["recording"], (result) => {
+      if (result.recording) {
+        console.log("Re-attaching listeners due to URL change");
+        attachListeners(true);
+      }
+    });
   }
+}).observe(document, { subtree: true, childList: true });
+
+// Also handle URL changes through History API
+window.addEventListener('popstate', () => {
+  chrome.storage.local.get(["recording"], (result) => {
+    if (result.recording) {
+      console.log("Re-attaching listeners due to popstate");
+      attachListeners(true);
+    }
+  });
+});
+
+// Modify the startRecording function to better handle persistence
+function startRecording() {
+  console.log("Starting recording...");
+  chrome.storage.local.get(["eventsLog"], (result) => {
+    let initialEventsLog = result.eventsLog || [];
+    chrome.storage.local.set({ 
+      recording: true, 
+      eventsLog: initialEventsLog,
+      recordingStartTime: Date.now() // Add timestamp to track session
+    }, () => {
+      attachListeners(true);
+    });
+  });
 }
 
 // Remove listeners when recording stops.
 function stopRecording() {
-  try {
-    if (!recording) {
-      console.log("No recording in progress");
-      return;
-    }
-    
-    recording = false;
+  console.log("Stopping recording...");
+  chrome.storage.local.set({ recording: false }, () => {
+    detachListeners();
+  });
+}
 
-    // Remove Mouse Event Listeners
-    document.removeEventListener('click', recordEvent, true);
-    document.removeEventListener('mousedown', recordEvent, true);
-    document.removeEventListener('mouseup', recordEvent, true);
-    document.removeEventListener('mousemove', recordEvent, true);
-    document.removeEventListener('contextmenu', recordEvent, true);
+function attachListeners(resuming) {
+  // Mouse Events
+  document.addEventListener('click', recordEvent, true);
+  document.addEventListener('mousedown', recordEvent, true);
+  document.addEventListener('mouseup', recordEvent, true);
+  document.addEventListener('mousemove', recordEvent, true);
+  document.addEventListener('contextmenu', recordEvent, true);
 
-    // Remove Keyboard Event Listeners
-    document.removeEventListener('keydown', recordEvent, true);
-    document.removeEventListener('keyup', recordEvent, true);
+  // Keyboard Events
+  document.addEventListener('keydown', recordEvent, true);
+  document.addEventListener('keyup', recordEvent, true);
 
-    // Remove Scroll Event Listener
-    document.removeEventListener('scroll', recordEvent, true);
+  // Scroll event
+  document.addEventListener('scroll', recordEvent, true);
+  
+  //Form Events
+  document.addEventListener('input', recordEvent, true);
+  document.addEventListener('change', recordEvent, true);
+  document.addEventListener('submit', recordEvent, true);
 
-    //Form Events
-    document.removeEventListener('input', recordEvent, true);
-    document.removeEventListener('change', recordEvent, true);
-    document.removeEventListener('submit', recordEvent, true);
-
-    console.log("Recording stopped successfully. Total events captured:", eventsLog.length);
-  } catch (error) {
-    console.error("Error stopping recording:", error);
-    throw error;
+  if (resuming) {
+    console.log("Resuming recording. All event listeners re-attached.");
+  } else {
+    console.log("Recording started successfully. All event listeners attached.");
   }
+}
+
+function detachListeners() {
+  // Remove Mouse Event Listeners
+  document.removeEventListener('click', recordEvent, true);
+  document.removeEventListener('mousedown', recordEvent, true);
+  document.removeEventListener('mouseup', recordEvent, true);
+  document.removeEventListener('mousemove', recordEvent, true);
+  document.removeEventListener('contextmenu', recordEvent, true);
+
+  // Remove Keyboard Event Listeners
+  document.removeEventListener('keydown', recordEvent, true);
+  document.removeEventListener('keyup', recordEvent, true);
+
+  // Remove Scroll Event Listener
+  document.removeEventListener('scroll', recordEvent, true);
+
+  //Form Events
+  document.removeEventListener('input', recordEvent, true);
+  document.removeEventListener('change', recordEvent, true);
+  document.removeEventListener('submit', recordEvent, true);
+
+  console.log("Event listeners detached.");
 }
 
 // Listen for messages from the popup.
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  try {
-    console.log("Received message:", message);
-    if (message.command === "startRecording") {
-      startRecording();
-      sendResponse({ status: "recording started", success: true });
-    } else if (message.command === "stopRecording") {
-      stopRecording();
-      console.log(`Stopping recording. Total events captured: ${eventsLog.length}`);
-      sendResponse({ status: "recording stopped", success: true, log: eventsLog });
-    } else if (message.command === "getLog") {
-      console.log(`Getting log. Current events: ${eventsLog.length}`);
-      sendResponse({ log: eventsLog, success: true });
-    } else if (message.ping) {
-      sendResponse({pong: true, success: true});
-    }
-  } catch (error) {
-    console.error("Error handling message:", error);
-    sendResponse({ error: error.message, success: false });
+  console.log("Received message:", message);
+  if (message.command === "startRecording") {
+    startRecording();
+    sendResponse({ status: "recording started", success: true });
+  } else if (message.command === "stopRecording") {
+    stopRecording();
+    chrome.storage.local.get(["eventsLog"], (result) => {
+      console.log(`Stopping recording. Total events captured: ${result.eventsLog ? result.eventsLog.length : 0}`);
+      sendResponse({ status: "recording stopped", success: true, log: result.eventsLog || [] });
+    });
+  } else if (message.command === "getLog") {
+    chrome.storage.local.get(["eventsLog"], (result) => {
+      console.log(`Getting log. Current events: ${result.eventsLog ? result.eventsLog.length : 0}`);
+      sendResponse({ log: result.eventsLog || [], success: true });
+    });
+  } else if (message.ping) {
+    sendResponse({ pong: true, success: true });
+  } else if (message.action === "clearHistory") {
+    // Logic to clear the chat history
+    localStorage.removeItem('chatHistory'); // Assuming 'chatHistory' is the key in localStorage
+    console.log("Chat history cleared from content.js");
+    sendResponse({success: true}); // Send a success response back to popup.js
+    return true; // Indicate that you wish to send a response asynchronously
+  } else if (message.command === "clearLog") {
+    // Logic to clear the event log
+    chrome.storage.local.set({ eventsLog: [] }, () => { // Set eventsLog to an empty array
+      console.log("Event log cleared in content.js");
+      sendResponse({ success: true }); // Send success response
+    });
+    return true; // Indicate async response
   }
   return true; // Keep the message channel open for async response
 });
 
-// Send a ready message to the popup when the content script loads.
-try {
-  chrome.runtime.sendMessage({ ready: true }, (response) => {
-    if (chrome.runtime.lastError) {
-      console.log("Popup not ready to receive ready message");
+// On initial load, check if we should be recording and handle existing data
+chrome.storage.local.get(["recording", "recordingStartTime"], (result) => {
+  if (result.recording) {
+    console.log("Resuming recording from previous session");
+    attachListeners(true);
+  }
+});
+
+// Helper function to get descriptive target information.
+function getTargetInfo(target) {
+  let info = "";
+
+    if (target.tagName) {
+        info += target.tagName.toLowerCase();
     }
-  });
-} catch (error) {
-  console.error("Error sending ready message:", error);
+
+    if (target.id) {
+        info += `#${target.id}`;
+    }
+
+    if (target.name) {
+        info += `[name="${target.name}"]`;
+    }
+  if (target.type) {
+    info += `[type="${target.type}"]`
+  }
+
+    if (target.textContent) {
+        info += `: "${target.textContent.substring(0, 100).trim()}"`; // Limit length
+    }
+  if(target.value && (target.type === 'submit' || target.type === 'button')) {
+    info += ` (value: ${target.value})`;
+  }
+
+    return info;
 }
 
 // Helper functions remain unchanged

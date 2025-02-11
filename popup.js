@@ -25,13 +25,26 @@ function sendMessageToContent(message, callback) {
 // Start Recording
 document.getElementById("startBtn").addEventListener("click", () => {
     console.log("Start button clicked");
-    sendMessageToContent({ command: "startRecording" }, (response) => {
-        if (response && response.status) {
-            console.log("Recording started:", response);
-            document.getElementById("status").textContent = "Recording started...";
+
+    // First, send message to clear the log
+    sendMessageToContent({ command: "clearLog" }, (clearLogResponse) => {
+        if (clearLogResponse && clearLogResponse.success) {
+            console.log("Log cleared successfully. Starting recording...");
+            document.getElementById("status").textContent = "Log cleared. Starting recording...";
+
+            // Then, send message to start recording
+            sendMessageToContent({ command: "startRecording" }, (startRecordingResponse) => {
+                if (startRecordingResponse && startRecordingResponse.status) {
+                    console.log("Recording started:", startRecordingResponse);
+                    document.getElementById("status").textContent = "Recording started...";
+                } else {
+                    console.error("Failed to start recording:", startRecordingResponse);
+                    document.getElementById("status").textContent = "Error starting recording";
+                }
+            });
         } else {
-            console.error("Failed to start recording:", response);
-            document.getElementById("status").textContent = "Error starting recording";
+            console.error("Failed to clear log:", clearLogResponse);
+            document.getElementById("status").textContent = "Error clearing log before recording";
         }
     });
 });
@@ -107,5 +120,26 @@ chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     } else {
         document.getElementById("status").textContent = "Error: No active tab found";
     }
+});
+
+document.addEventListener('DOMContentLoaded', function () {
+  const startBurromButton = document.getElementById('startBurrom'); // Assuming 'startBurrom' is the ID of your button
+
+  if (startBurromButton) {
+    startBurromButton.addEventListener('click', function() {
+      // Send a message to content.js to clear the chat history
+      chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+        chrome.tabs.sendMessage(tabs[0].id, {action: "clearHistory"}, function(response) {
+          if(response && response.success){
+            console.log("Chat history cleared successfully");
+          } else {
+            console.error("Failed to clear chat history");
+          }
+        });
+      });
+      // ... rest of your button click logic (e.g., starting the bot) ...
+    });
+  }
+  // ... rest of your popup.js code ...
 });
   

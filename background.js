@@ -9,5 +9,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // example, the content script handles everything.
 
     // It is important to return true from this function, to indicate that sendResponse will be called asynchronously.
+    if (message.action === "recordEvent") {
+        chrome.storage.local.get(["recording", "eventsLog"], (result) => {
+            if (result.recording) {
+                let updatedEventsLog = result.eventsLog || [];
+                updatedEventsLog.push(message.eventData);
+                chrome.storage.local.set({ eventsLog: updatedEventsLog });
+                // TEMPORARY DEBUGGING: Log the URL of the tab that sent the event
+                console.log("Event received from:", sender.tab ? sender.tab.url : "No tab information");
+            }
+        });
+    }
     return true;
 });
