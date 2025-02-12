@@ -77,7 +77,8 @@ function processEventLog(events) {
                 timestamps: [] // For calculating typing speed
             },
             finalValues: {}, // Add this to track final values for each field
-            fieldMetadata: {} // Add this to store field context
+            fieldMetadata: {}, // Add this to store field context
+            finalTextByField: {}, // New object to store only final text values
         }
     };
 
@@ -202,18 +203,20 @@ function processEventLog(events) {
                     key: event.key,
                     value: event.inputValue
                 });
+
+                // Store only the final value for each field
+                if (event.inputValue !== undefined) {
+                    stats.textStats.finalTextByField[fieldId] = event.inputValue;
+                }
             }
         }
 
         // Process paste events
         if (event.type === 'paste' && event.pastedText) {
-            const words = event.pastedText.trim().split(/\s+/);
-            stats.textStats.totalWordsTyped += words.length;
-            stats.textStats.totalCharactersTyped += event.pastedText.length;
-
-            // Update current input text
-            if (currentInputField) {
-                currentInputText += event.pastedText;
+            const fieldId = event.fieldIdentifier;
+            if (fieldId) {
+                const currentText = stats.textStats.finalTextByField[fieldId] || '';
+                stats.textStats.finalTextByField[fieldId] = currentText + event.pastedText;
             }
         }
 
@@ -314,17 +317,13 @@ function processEventLog(events) {
         stats.textStats.typingSpeed.peakWPM = Math.round((maxCharsInWindow * 12) / 5); // Convert to WPM
     }
 
-    // Format the final values summary for better readability
-    stats.textStats.inputSummary = Object.entries(stats.textStats.finalValues)
-        .map(([fieldId, data]) => ({
+    // Replace the detailed text history with just the final values
+    stats.textStats.inputSummary = Object.entries(stats.textStats.finalTextByField)
+        .map(([fieldId, finalText]) => ({
             field: fieldId,
-            finalValue: data.value,
-            tabName: data.tabName,
-            url: data.url,
-            fieldInfo: data.fieldInfo,
-            lastModified: data.timestamp
-        }))
-        .sort((a, b) => new Date(a.lastModified) - new Date(b.lastModified));
+            finalValue: finalText,
+            fieldInfo: stats.textStats.fieldMetadata[fieldId]?.targetInfo || ''
+        }));
 
     return stats;
 }
