@@ -1,5 +1,7 @@
 let contentTabId = null;
 let contentReady = false;
+let isRecording = false;
+let hasRecordedData = false;
 
 function sendMessageToContent(message, callback) {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
@@ -25,16 +27,17 @@ function sendMessageToContent(message, callback) {
 // Start Recording
 document.getElementById("startBtn").addEventListener("click", () => {
     console.log("Start button clicked");
-
-    // First, send message to clear the log
+    
     sendMessageToContent({ command: "clearLog" }, (clearLogResponse) => {
         if (clearLogResponse && clearLogResponse.success) {
             console.log("Log cleared successfully. Starting recording...");
             document.getElementById("status").textContent = "Log cleared. Starting recording...";
-
-            // Then, send message to start recording
+            
             sendMessageToContent({ command: "startRecording" }, (startRecordingResponse) => {
                 if (startRecordingResponse && startRecordingResponse.status) {
+                    isRecording = true;
+                    chrome.storage.local.set({ isRecording: true, hasRecordedData: false });
+                    updateButtonStates();
                     console.log("Recording started:", startRecordingResponse);
                     document.getElementById("status").textContent = "Recording started...";
                 } else {
@@ -54,6 +57,10 @@ document.getElementById("stopBtn").addEventListener("click", () => {
     console.log("Stop button clicked");
     sendMessageToContent({ command: "stopRecording" }, (response) => {
         if (response && response.status) {
+            isRecording = false;
+            hasRecordedData = true;
+            chrome.storage.local.set({ isRecording: false, hasRecordedData: true });
+            updateButtonStates();
             console.log("Recording stopped. Events captured:", response.log?.length || 0);
             document.getElementById("status").textContent = "Recording stopped.";
         } else {
@@ -110,11 +117,23 @@ document.getElementById("analyzeBtn").addEventListener("click", () => {
 function setContentReady(tabId) {
     contentReady = true;
     contentTabId = tabId;
-    document.getElementById("startBtn").disabled = false;
-    document.getElementById("stopBtn").disabled = false;
-    document.getElementById("downloadBtn").disabled = false;
-    document.getElementById("analyzeBtn").disabled = false;
+    
+    // Initialize buttons based on stored states
+    chrome.storage.local.get(['isRecording', 'hasRecordedData'], function(result) {
+        isRecording = result.isRecording || false;
+        hasRecordedData = result.hasRecordedData || false;
+        updateButtonStates();
+    });
+    
     document.getElementById("status").textContent = "Ready to record.";
+}
+
+// Add new function to manage button states
+function updateButtonStates() {
+    document.getElementById("startBtn").disabled = !contentReady || isRecording;
+    document.getElementById("stopBtn").disabled = !isRecording;
+    document.getElementById("downloadBtn").disabled = !hasRecordedData;
+    document.getElementById("analyzeBtn").disabled = !hasRecordedData;
 }
 
 // Listen for the ready message from the content script.
