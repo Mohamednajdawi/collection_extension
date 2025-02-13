@@ -119,8 +119,63 @@ function startRecording() {
 function stopRecording() {
   console.log("Stopping recording...");
   chrome.storage.local.set({ recording: false }, () => {
+    // Pass mouseIntervals array to the function
+    summarizeMouseIntervals(mouseIntervals);
     detachListeners();
   });
+}
+
+// Add new helper function to summarize intervals
+function summarizeMouseIntervals(intervals) {
+  console.log("Summarizing mouse intervals...");
+  if (intervals.length === 0) return;
+  
+  let summaries = [];
+  let currentInterval = {
+    status: intervals[0].status,
+    startTime: new Date(intervals[0].timestamp),
+    endTime: new Date(intervals[0].timestamp)
+  };
+  
+  for (let i = 1; i < intervals.length; i++) {
+    const currentStatus = intervals[i].status;
+    const currentTime = new Date(intervals[i].timestamp);
+    
+    if (currentStatus === currentInterval.status) {
+      currentInterval.endTime = currentTime;
+    } else {
+      // Calculate duration in seconds
+      const durationMs = currentInterval.endTime - currentInterval.startTime;
+      const durationSec = (durationMs / 1000).toFixed(1);
+      
+      summaries.push({
+        status: currentInterval.status,
+        startTime: currentInterval.startTime.toISOString(),
+        endTime: currentInterval.endTime.toISOString(),
+        durationSeconds: parseFloat(durationSec)
+      });
+      
+      // Start new interval
+      currentInterval = {
+        status: currentStatus,
+        startTime: currentTime,
+        endTime: currentTime
+      };
+    }
+  }
+  
+  // Don't forget to add the last interval
+  const durationMs = currentInterval.endTime - currentInterval.startTime;
+  const durationSec = (durationMs / 1000).toFixed(1);
+  summaries.push({
+    status: currentInterval.status,
+    startTime: currentInterval.startTime.toISOString(),
+    endTime: currentInterval.endTime.toISOString(),
+    durationSeconds: parseFloat(durationSec)
+  });
+
+  console.log('Mouse Interval Summary:', summaries);
+  return summaries;
 }
 
 function attachListeners(resuming) {
@@ -222,9 +277,35 @@ function detachListeners() {
   console.log("Event listeners detached.");
 }
 
+// ----- Mouse Inside/Outside Check -----
+// This code tracks whether the mouse is inside the window or not,
+// and records the state every second.
+let mouseInsideWindow = false;
+let mouseIntervals = [];  // New array to hold interval records
+
+window.onmouseout = function(e) {
+  e = e || window.event;
+  var from = e.relatedTarget || e.toElement;
+  if (!from || from.nodeName === "HTML") {
+    mouseInsideWindow = false;
+  }
+};
+
+window.onmouseover = function(e) {
+  mouseInsideWindow = true;
+};
+
+setInterval(() => {
+  const statusStr = mouseInsideWindow ? "inside" : "outside";
+  const intervalRecord = { timestamp: new Date().toISOString(), status: statusStr };
+  mouseIntervals.push(intervalRecord);
+  console.log("Mouse is " + statusStr + " the window.");
+}, 1000);
+
 // Listen for messages from the popup.
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log("Received message:", message);
+  
   if (message.command === "startRecording") {
     startRecording();
     sendResponse({ status: "recording started", success: true });
@@ -242,20 +323,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   } else if (message.ping) {
     sendResponse({ pong: true, success: true });
   } else if (message.action === "clearHistory") {
-    // Logic to clear the chat history
-    localStorage.removeItem('chatHistory'); // Assuming 'chatHistory' is the key in localStorage
+    localStorage.removeItem('chatHistory');
     console.log("Chat history cleared from content.js");
-    sendResponse({success: true}); // Send a success response back to popup.js
-    return true; // Indicate that you wish to send a response asynchronously
+    sendResponse({ success: true });
+    return true;
   } else if (message.command === "clearLog") {
-    // Logic to clear the event log
-    chrome.storage.local.set({ eventsLog: [] }, () => { // Set eventsLog to an empty array
+    chrome.storage.local.set({ eventsLog: [] }, () => {
       console.log("Event log cleared in content.js");
-      sendResponse({ success: true }); // Send success response
+      sendResponse({ success: true });
     });
-    return true; // Indicate async response
+    return true;
   }
-  return true; // Keep the message channel open for async response
+  // New branch: Return mouse in/out intervals.
+  else if (message.command === "getMouseIntervals") {
+    sendResponse({ intervals: mouseIntervals, success: true });
+  }
+  // Add this to the chrome.runtime.onMessage.addListener section
+  else if (message.command === "summarizeMouseIntervals") {
+    const summaries = summarizeMouseIntervals(message.intervals);
+    sendResponse(summaries);
+  }
+  
+  return true; // Keep the message channel open for async responses.
 });
 
 // On initial load, check if we should be recording and handle existing data

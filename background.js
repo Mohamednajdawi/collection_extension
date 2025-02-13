@@ -325,5 +325,48 @@ function processEventLog(events) {
             fieldInfo: stats.textStats.fieldMetadata[fieldId]?.targetInfo || ''
         }));
 
+    // Add mouse interval processing
+    if (events.length > 0) {
+        let intervals = [];
+        let currentStatus = null;
+        let statusStartTime = null;
+
+        events.forEach(event => {
+            if (event.type === 'mouseenter' || event.type === 'mouseleave') {
+                const status = event.type === 'mouseenter' ? 'inside' : 'outside';
+                const timestamp = new Date(event.timestamp);
+
+                if (currentStatus === null) {
+                    currentStatus = status;
+                    statusStartTime = timestamp;
+                } else if (status !== currentStatus) {
+                    // Record interval
+                    intervals.push({
+                        status: currentStatus,
+                        startTime: statusStartTime.toISOString(),
+                        endTime: timestamp.toISOString(),
+                        durationSeconds: (timestamp - statusStartTime) / 1000
+                    });
+
+                    // Start new interval
+                    currentStatus = status;
+                    statusStartTime = timestamp;
+                }
+            }
+        });
+
+        // Add final interval if exists
+        if (currentStatus !== null && statusStartTime !== null) {
+            const lastTimestamp = new Date(events[events.length - 1].timestamp);
+            intervals.push({
+                status: currentStatus,
+                startTime: statusStartTime.toISOString(),
+                endTime: lastTimestamp.toISOString(),
+                durationSeconds: (lastTimestamp - statusStartTime) / 1000
+            });
+        }
+
+    }
+
     return stats;
 }

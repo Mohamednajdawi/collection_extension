@@ -94,22 +94,78 @@ document.getElementById("downloadBtn").addEventListener("click", () => {
 // Add this with your other button handlers
 document.getElementById("analyzeBtn").addEventListener("click", () => {
     console.log("Analyze button clicked");
-    chrome.runtime.sendMessage({ action: "processEvents" }, (response) => {
-        if (response) {
-            console.log("Analysis complete:", response);
-            // Create and download the analysis report
-            let analysisData = JSON.stringify(response, null, 2);
-            let blob = new Blob([analysisData], { type: "application/json" });
-            let url = URL.createObjectURL(blob);
-            let a = document.createElement("a");
-            a.href = url;
-            a.download = "session_analysis.json";
-            a.click();
-            URL.revokeObjectURL(url);
-            document.getElementById("status").textContent = "Analysis complete and downloaded";
+    
+    // First get mouse intervals
+    sendMessageToContent({ command: "getMouseIntervals" }, (mouseResponse) => {
+        if (mouseResponse && mouseResponse.success) {
+            // Get the summaries
+            sendMessageToContent({ 
+                command: "summarizeMouseIntervals", 
+                intervals: mouseResponse.intervals 
+            }, (summaryResponse) => {
+                // Now process all events with the background script
+                chrome.runtime.sendMessage({ action: "processEvents" }, (response) => {
+                    if (response) {
+                        // Add mouse interval data to the analysis
+                        response.mouseIntervals = {
+                            // raw: mouseResponse.intervals,
+                            summaries: summaryResponse
+                        };
+
+                        console.log("Analysis complete:", response);
+                        // Create and download the analysis report
+                        let analysisData = JSON.stringify(response, null, 2);
+                        let blob = new Blob([analysisData], { type: "application/json" });
+                        let url = URL.createObjectURL(blob);
+                        let a = document.createElement("a");
+                        a.href = url;
+                        a.download = "session_analysis.json";
+                        a.click();
+                        URL.revokeObjectURL(url);
+                        document.getElementById("status").textContent = "Analysis complete and downloaded";
+                    } else {
+                        console.error("Analysis failed");
+                        document.getElementById("status").textContent = "Error analyzing session data";
+                    }
+                });
+            });
         } else {
-            console.error("Analysis failed");
-            document.getElementById("status").textContent = "Error analyzing session data";
+            console.error("Failed to get mouse intervals");
+            document.getElementById("status").textContent = "Error getting mouse intervals";
+        }
+    });
+});
+
+// New event listener for the Download Mouse Intervals button.
+document.getElementById("downloadMouseIntervalsBtn").addEventListener("click", () => {
+    console.log("Download Mouse Intervals button clicked");
+    sendMessageToContent({ command: "getMouseIntervals" }, (response) => {
+        if (response && response.success) {
+            // Get the raw intervals data
+            const rawIntervals = response.intervals;
+            
+            // Call summarizeMouseIntervals to get the summaries
+            sendMessageToContent({ command: "summarizeMouseIntervals", intervals: rawIntervals }, (summaryResponse) => {
+                // Combine both raw data and summaries
+                const combinedData = {
+                    rawIntervals: rawIntervals,
+                    summaries: summaryResponse
+                };
+                
+                // Create and download the combined data
+                let intervalsData = JSON.stringify(combinedData, null, 2);
+                let blob = new Blob([intervalsData], { type: "application/json" });
+                let url = URL.createObjectURL(blob);
+                let a = document.createElement("a");
+                a.href = url;
+                a.download = "mouse_intervals_with_summaries.json";
+                a.click();
+                URL.revokeObjectURL(url);
+                document.getElementById("status").textContent = "Mouse intervals and summaries downloaded";
+            });
+        } else {
+            console.error("Failed to get mouse intervals:", response);
+            document.getElementById("status").textContent = "Error getting mouse intervals";
         }
     });
 });
@@ -132,8 +188,9 @@ function setContentReady(tabId) {
 function updateButtonStates() {
     document.getElementById("startBtn").disabled = !contentReady || isRecording;
     document.getElementById("stopBtn").disabled = !isRecording;
-    document.getElementById("downloadBtn").disabled = !hasRecordedData;
-    document.getElementById("analyzeBtn").disabled = !hasRecordedData;
+    document.getElementById("downloadBtn").disabled = !hasRecordedData || isRecording;
+    document.getElementById("analyzeBtn").disabled = !hasRecordedData || isRecording;
+    document.getElementById("downloadMouseIntervalsBtn").disabled = !contentReady || isRecording;
 }
 
 // Listen for the ready message from the content script.
@@ -148,6 +205,7 @@ document.getElementById("startBtn").disabled = true;
 document.getElementById("stopBtn").disabled = true;
 document.getElementById("downloadBtn").disabled = true;
 document.getElementById("analyzeBtn").disabled = true;
+document.getElementById("downloadMouseIntervalsBtn").disabled = true;
 
 // Get the current tab when popup opens, and check if the content script is already there.
 chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
