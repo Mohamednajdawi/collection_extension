@@ -3,11 +3,24 @@ let contentReady = false;
 let isRecording = false;
 let hasRecordedData = false;
 
+// Helper function to update status with visual feedback
+function updateStatus(message, type = 'info') {
+    const statusEl = document.getElementById("status");
+    statusEl.textContent = message;
+    statusEl.className = ''; // Reset classes
+    
+    if (type === 'success') {
+        statusEl.classList.add('status-success');
+    } else if (type === 'error') {
+        statusEl.classList.add('status-error');
+    }
+}
+
 function sendMessageToContent(message, callback) {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         if (!tabs[0]) {
             console.error("No active tab found");
-            document.getElementById("status").textContent = "Error: No active tab found";
+            updateStatus("Error: No active tab found", 'error');
             return;
         }
         
@@ -15,7 +28,7 @@ function sendMessageToContent(message, callback) {
         chrome.tabs.sendMessage(tabs[0].id, message, (response) => {
             if (chrome.runtime.lastError) {
                 console.error("Message sending failed:", chrome.runtime.lastError);
-                document.getElementById("status").textContent = "Error: Content script not ready";
+                updateStatus("Error: Content script not ready", 'error');
                 return;
             }
             console.log("Received response from content script:", response);
@@ -27,27 +40,17 @@ function sendMessageToContent(message, callback) {
 // Start Recording
 document.getElementById("startBtn").addEventListener("click", () => {
     console.log("Start button clicked");
-    
-    sendMessageToContent({ command: "clearLog" }, (clearLogResponse) => {
-        if (clearLogResponse && clearLogResponse.success) {
-            console.log("Log cleared successfully. Starting recording...");
-            document.getElementById("status").textContent = "Log cleared. Starting recording...";
-            
-            sendMessageToContent({ command: "startRecording" }, (startRecordingResponse) => {
-                if (startRecordingResponse && startRecordingResponse.status) {
-                    isRecording = true;
-                    chrome.storage.local.set({ isRecording: true, hasRecordedData: false });
-                    updateButtonStates();
-                    console.log("Recording started:", startRecordingResponse);
-                    document.getElementById("status").textContent = "Recording started...";
-                } else {
-                    console.error("Failed to start recording:", startRecordingResponse);
-                    document.getElementById("status").textContent = "Error starting recording";
-                }
-            });
+    sendMessageToContent({ command: "startRecording" }, (response) => {
+        if (response && response.status) {
+            isRecording = true;
+            hasRecordedData = false;
+            chrome.storage.local.set({ isRecording: true, hasRecordedData: false });
+            updateButtonStates();
+            updateStatus("Recording in progress...", 'success');
+            document.getElementById("stopBtn").setAttribute("data-recording", "true");
         } else {
-            console.error("Failed to clear log:", clearLogResponse);
-            document.getElementById("status").textContent = "Error clearing log before recording";
+            console.error("Failed to start recording:", response);
+            updateStatus("Error starting recording", 'error');
         }
     });
 });
@@ -61,39 +64,40 @@ document.getElementById("stopBtn").addEventListener("click", () => {
             hasRecordedData = true;
             chrome.storage.local.set({ isRecording: false, hasRecordedData: true });
             updateButtonStates();
-            console.log("Recording stopped. Events captured:", response.log?.length || 0);
-            document.getElementById("status").textContent = "Recording stopped.";
+            document.getElementById("stopBtn").setAttribute("data-recording", "false");
+            updateStatus(`Recording stopped. ${response.log?.length || 0} events captured.`, 'success');
         } else {
             console.error("Failed to stop recording:", response);
-            document.getElementById("status").textContent = "Error stopping recording";
+            updateStatus("Error stopping recording", 'error');
         }
     });
 });
 
-// Download the log as a JSON file
+// Download button handler
 document.getElementById("downloadBtn").addEventListener("click", () => {
     console.log("Download button clicked");
     sendMessageToContent({ command: "getLog" }, (response) => {
-        if (!response || !response.log) {
-            console.error("No log data available:", response);
-            document.getElementById("status").textContent = "Error: No log data available";
-            return;
+        if (response && response.success) {
+            let logData = JSON.stringify(response.log, null, 2);
+            let blob = new Blob([logData], { type: "application/json" });
+            let url = URL.createObjectURL(blob);
+            let a = document.createElement("a");
+            a.href = url;
+            a.download = "session_log.json";
+            a.click();
+            URL.revokeObjectURL(url);
+            updateStatus("Session log downloaded successfully", 'success');
+        } else {
+            console.error("Failed to get log:", response);
+            updateStatus("Error downloading session log", 'error');
         }
-        console.log("Received log data. Events:", response.log.length);
-        let logData = JSON.stringify(response.log, null, 2);
-        let blob = new Blob([logData], { type: "application/json" });
-        let url = URL.createObjectURL(blob);
-        let a = document.createElement("a");
-        a.href = url;
-        a.download = "session_log.json";
-        a.click();
-        URL.revokeObjectURL(url);
     });
 });
 
-// Add this with your other button handlers
+// Analyze button handler
 document.getElementById("analyzeBtn").addEventListener("click", () => {
     console.log("Analyze button clicked");
+    updateStatus("Analyzing session data...");
     
     // First get mouse intervals
     sendMessageToContent({ command: "getMouseIntervals" }, (mouseResponse) => {
@@ -108,12 +112,10 @@ document.getElementById("analyzeBtn").addEventListener("click", () => {
                     if (response) {
                         // Add mouse interval data to the analysis
                         response.mouseIntervals = {
-                            // raw: mouseResponse.intervals,
                             summaries: summaryResponse
                         };
 
                         console.log("Analysis complete:", response);
-                        // Create and download the analysis report
                         let analysisData = JSON.stringify(response, null, 2);
                         let blob = new Blob([analysisData], { type: "application/json" });
                         let url = URL.createObjectURL(blob);
@@ -122,37 +124,34 @@ document.getElementById("analyzeBtn").addEventListener("click", () => {
                         a.download = "session_analysis.json";
                         a.click();
                         URL.revokeObjectURL(url);
-                        document.getElementById("status").textContent = "Analysis complete and downloaded";
+                        updateStatus("Analysis complete and downloaded", 'success');
                     } else {
                         console.error("Analysis failed");
-                        document.getElementById("status").textContent = "Error analyzing session data";
+                        updateStatus("Error analyzing session data", 'error');
                     }
                 });
             });
         } else {
             console.error("Failed to get mouse intervals");
-            document.getElementById("status").textContent = "Error getting mouse intervals";
+            updateStatus("Error analyzing mouse data", 'error');
         }
     });
 });
 
-// New event listener for the Download Mouse Intervals button.
+// Download Mouse Intervals button handler
 document.getElementById("downloadMouseIntervalsBtn").addEventListener("click", () => {
     console.log("Download Mouse Intervals button clicked");
+    updateStatus("Processing mouse data...");
     sendMessageToContent({ command: "getMouseIntervals" }, (response) => {
         if (response && response.success) {
-            // Get the raw intervals data
             const rawIntervals = response.intervals;
             
-            // Call summarizeMouseIntervals to get the summaries
             sendMessageToContent({ command: "summarizeMouseIntervals", intervals: rawIntervals }, (summaryResponse) => {
-                // Combine both raw data and summaries
                 const combinedData = {
                     rawIntervals: rawIntervals,
                     summaries: summaryResponse
                 };
                 
-                // Create and download the combined data
                 let intervalsData = JSON.stringify(combinedData, null, 2);
                 let blob = new Blob([intervalsData], { type: "application/json" });
                 let url = URL.createObjectURL(blob);
@@ -161,66 +160,65 @@ document.getElementById("downloadMouseIntervalsBtn").addEventListener("click", (
                 a.download = "mouse_intervals_with_summaries.json";
                 a.click();
                 URL.revokeObjectURL(url);
-                document.getElementById("status").textContent = "Mouse intervals and summaries downloaded";
+                updateStatus("Mouse data downloaded successfully", 'success');
             });
         } else {
             console.error("Failed to get mouse intervals:", response);
-            document.getElementById("status").textContent = "Error getting mouse intervals";
+            updateStatus("Error downloading mouse data", 'error');
         }
     });
 });
+
+function updateButtonStates() {
+    const startBtn = document.getElementById("startBtn");
+    const stopBtn = document.getElementById("stopBtn");
+    const downloadBtn = document.getElementById("downloadBtn");
+    const analyzeBtn = document.getElementById("analyzeBtn");
+    const downloadMouseIntervalsBtn = document.getElementById("downloadMouseIntervalsBtn");
+
+    startBtn.disabled = !contentReady || isRecording;
+    stopBtn.disabled = !isRecording;
+    downloadBtn.disabled = !hasRecordedData || isRecording;
+    analyzeBtn.disabled = !hasRecordedData || isRecording;
+    downloadMouseIntervalsBtn.disabled = !hasRecordedData || isRecording;
+
+    // Update recording state visual indicator
+    stopBtn.setAttribute("data-recording", isRecording.toString());
+}
 
 function setContentReady(tabId) {
     contentReady = true;
     contentTabId = tabId;
     
-    // Initialize buttons based on stored states
-    chrome.storage.local.get(['isRecording', 'hasRecordedData'], function(result) {
+    chrome.storage.local.get(["isRecording", "hasRecordedData"], (result) => {
         isRecording = result.isRecording || false;
         hasRecordedData = result.hasRecordedData || false;
         updateButtonStates();
     });
     
-    document.getElementById("status").textContent = "Ready to record.";
+    updateStatus("Ready to record", 'success');
 }
 
-// Add new function to manage button states
-function updateButtonStates() {
-    document.getElementById("startBtn").disabled = !contentReady || isRecording;
-    document.getElementById("stopBtn").disabled = !isRecording;
-    document.getElementById("downloadBtn").disabled = !hasRecordedData || isRecording;
-    document.getElementById("analyzeBtn").disabled = !hasRecordedData || isRecording;
-    document.getElementById("downloadMouseIntervalsBtn").disabled = !contentReady || isRecording;
-}
-
-// Listen for the ready message from the content script.
+// Listen for the ready message from the content script
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.ready && sender.tab) {
         setContentReady(sender.tab.id);
     }
 });
 
-//Disable buttons by default.
-document.getElementById("startBtn").disabled = true;
-document.getElementById("stopBtn").disabled = true;
-document.getElementById("downloadBtn").disabled = true;
-document.getElementById("analyzeBtn").disabled = true;
-document.getElementById("downloadMouseIntervalsBtn").disabled = true;
-
-// Get the current tab when popup opens, and check if the content script is already there.
+// Check content script status when popup opens
 chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     if (tabs[0]) {
-        //Try sending a message. If no response, then we know the content script isn't present.
         chrome.tabs.sendMessage(tabs[0].id, {ping: true}, (response) => {
             if (chrome.runtime.lastError) {
                 console.log("Content script not yet loaded in this tab.");
-                document.getElementById("status").textContent = "Content script not ready";
+                updateStatus("Content script not ready", 'error');
             } else if (response && response.pong) {
                 setContentReady(tabs[0].id);
             }
         });
     } else {
-        document.getElementById("status").textContent = "Error: No active tab found";
+        updateStatus("Error: No active tab found", 'error');
     }
 });
 
