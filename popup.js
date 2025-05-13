@@ -97,26 +97,56 @@ document.getElementById("downloadBtn").addEventListener("click", () => {
 // Analyze button handler
 document.getElementById("analyzeBtn").addEventListener("click", () => {
     console.log("Analyze button clicked");
-    updateStatus("Analyzing session data...");
-    
-    // First get mouse intervals
+    updateStatus("Gathering data for analysis...");
+
+    let eventsLog = null;
+    let summarizedMouseIntervals = null;
+
+    // 1. Get Event Log
+    sendMessageToContent({ command: "getLog" }, (logResponse) => {
+        if (logResponse && logResponse.success) {
+            eventsLog = logResponse.log;
+            checkIfAllDataFetched();
+        } else {
+            console.error("Failed to get log:", logResponse);
+            updateStatus("Error fetching event log for analysis", 'error');
+        }
+    });
+
+    // 2. Get Raw Mouse Intervals, then Summarize them
     sendMessageToContent({ command: "getMouseIntervals" }, (mouseResponse) => {
         if (mouseResponse && mouseResponse.success) {
-            // Get the summaries
             sendMessageToContent({ 
                 command: "summarizeMouseIntervals", 
                 intervals: mouseResponse.intervals 
             }, (summaryResponse) => {
-                // Now process all events with the background script
-                chrome.runtime.sendMessage({ action: "processEvents" }, (response) => {
-                    if (response) {
-                        // Add mouse interval data to the analysis
-                        response.mouseIntervals = {
-                            summaries: summaryResponse
-                        };
+                if (summaryResponse) { // summarizeMouseIntervals directly returns the summary object
+                    summarizedMouseIntervals = summaryResponse;
+                    checkIfAllDataFetched();
+                } else {
+                    console.error("Failed to get summarized mouse intervals:", summaryResponse);
+                    updateStatus("Error fetching summarized mouse data", 'error');
+                }
+            });
+        } else {
+            console.error("Failed to get raw mouse intervals:", mouseResponse);
+            updateStatus("Error fetching raw mouse data", 'error');
+        }
+    });
 
-                        console.log("Analysis complete:", response);
-                        let analysisData = JSON.stringify(response, null, 2);
+    function checkIfAllDataFetched() {
+        if (eventsLog !== null && summarizedMouseIntervals !== null) {
+            updateStatus("Sending data to background for analysis...");
+            chrome.runtime.sendMessage(
+                { 
+                    action: "processEvents", 
+                    eventsLog: eventsLog, 
+                    summarizedMouseIntervals: summarizedMouseIntervals 
+                }, 
+                (analysisResponse) => {
+                    if (analysisResponse) {
+                        console.log("Analysis complete:", analysisResponse);
+                        let analysisData = JSON.stringify(analysisResponse, null, 2);
                         let blob = new Blob([analysisData], { type: "application/json" });
                         let url = URL.createObjectURL(blob);
                         let a = document.createElement("a");
@@ -126,16 +156,13 @@ document.getElementById("analyzeBtn").addEventListener("click", () => {
                         URL.revokeObjectURL(url);
                         updateStatus("Analysis complete and downloaded", 'success');
                     } else {
-                        console.error("Analysis failed");
+                        console.error("Analysis failed in background script");
                         updateStatus("Error analyzing session data", 'error');
                     }
-                });
-            });
-        } else {
-            console.error("Failed to get mouse intervals");
-            updateStatus("Error analyzing mouse data", 'error');
+                }
+            );
         }
-    });
+    }
 });
 
 // Download Mouse Intervals button handler
