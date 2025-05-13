@@ -22,7 +22,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     } else if (message.action === "processEvents") {
         // Expect eventsLog and summarizedMouseIntervals from popup.js
         const processedData = processEventLog(message.eventsLog || [], message.summarizedMouseIntervals || []);
-        sendResponse(processedData);
+            sendResponse(processedData);
         return true; // For async response
     }
     return true;
@@ -100,7 +100,7 @@ function initializeLoopState() {
 }
 
 function handlePageTracking(event, pageStats, loopState) {
-    if (event.url) {
+        if (event.url) {
         pageStats.uniqueUrls.add(event.url);
     }
     if (event.tabName) {
@@ -122,10 +122,10 @@ function handlePageTracking(event, pageStats, loopState) {
 function handleClickEvent(event, mouseStats, clicksByElement) {
     mouseStats.totalClicks++;
     mouseStats.clickHeatmap.push({
-        x: event.clickX,
-        y: event.clickY,
-        target: event.targetInfo
-    });
+                x: event.clickX,
+                y: event.clickY,
+                target: event.targetInfo
+            });
     const elementType = event.targetInfo ? event.targetInfo.split('[')[0] : 'unknown';
     clicksByElement[elementType] = (clicksByElement[elementType] || 0) + 1;
 }
@@ -157,10 +157,10 @@ function handleKeydownEvent(event, keyboardStats, textStats, loopState) {
         // Letter sequence and typing speed data
         if (event.key && event.key.length === 1) { // Single character
             textStats.letterSequence.push({
-                letter: event.key,
-                timestamp: event.timestamp,
-                field: fieldId,
-                position: event.cursorPosition,
+                        letter: event.key,
+                        timestamp: event.timestamp,
+                        field: fieldId,
+                        position: event.cursorPosition,
                 context: event.inputValue // Capture context at the time of keydown
             });
             loopState.characterCountForTypingSpeed++;
@@ -178,8 +178,8 @@ function handleKeydownEvent(event, keyboardStats, textStats, loopState) {
             textStats.fieldHistory[fieldId] = [];
         }
         textStats.fieldHistory[fieldId].push({
-            timestamp: event.timestamp,
-            key: event.key,
+                    timestamp: event.timestamp,
+                    key: event.key,
             value: event.inputValue // Value at the time of keydown
         });
     }
@@ -247,15 +247,15 @@ function processSingleEvent(event, stats, loopState) {
     }
 
     if (event.type === 'input' && event.targetInfo) {
-         const fieldId = event.fieldIdentifier || event.targetInfo;
+            const fieldId = event.fieldIdentifier || event.targetInfo;
          if (event.value !== undefined ) {
-            stats.textStats.finalValues[fieldId] = {
+                stats.textStats.finalValues[fieldId] = {
                 value: event.value,
-                timestamp: event.timestamp,
-                tabName: event.tabName,
-                url: event.url,
-                fieldInfo: event.targetInfo 
-            };
+                    timestamp: event.timestamp,
+                    tabName: event.tabName,
+                    url: event.url,
+                    fieldInfo: event.targetInfo
+                };
         }
     }
     handleGeneralEventTiming(event, stats.timeStats, loopState);
@@ -360,7 +360,7 @@ function finalizeStats(stats, loopState, events, summarizedMouseIntervals) {
     stats.keyboardStats.mostUsedKeys = Object.entries(stats.keyboardStats.mostUsedKeys)
         .sort(([, a], [, b]) => b - a)
         .reduce((r, [k, v]) => ({ ...r, [k]: v }), {});
-    
+
     if (loopState.currentField && loopState.fieldStartTime && events.length > 0) {
         const lastEventTimestamp = events[events.length - 1].timestamp;
         const timeInField = new Date(lastEventTimestamp) - new Date(loopState.fieldStartTime);

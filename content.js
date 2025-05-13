@@ -182,33 +182,129 @@ function summarizeMouseIntervals(intervals) {
   return summaries;
 }
 
-// ----- Mouse Inside/Outside Check -----
-// This code tracks whether the mouse is inside the window or not,
-// by directly recording mouseenter and mouseleave events.
-let mouseIntervals = []; // Stores { timestamp: string, status: 'inside'|'outside' }
+function attachListeners(resuming) {
+  // Mouse Events
+  document.addEventListener('click', recordEvent, true);
+  document.addEventListener('mousedown', recordEvent, true);
+  document.addEventListener('mouseup', recordEvent, true);
+  document.addEventListener('mousemove', recordEvent, true);
+  document.addEventListener('contextmenu', recordEvent, true);
 
-function recordMouseStatusChangeEvent(status) {
-    if (recording) { // Only record if recording is active
-        const timestamp = new Date().toISOString();
-        console.log(`Mouse event: ${status} at ${timestamp}`);
-        mouseIntervals.push({ timestamp, status });
+  // Keyboard Events
+  document.addEventListener('keydown', recordEvent, true);
+  document.addEventListener('keyup', recordEvent, true);
+
+  // Scroll event
+  document.addEventListener('scroll', recordEvent, true);
+  
+  //Form Events
+  document.addEventListener('input', recordEvent, true);
+  document.addEventListener('change', recordEvent, true);
+  document.addEventListener('submit', recordEvent, true);
+
+  // Add paste event listener
+  document.addEventListener('paste', function(e) {
+    if (recording) {
+      const pastedText = e.clipboardData.getData('text');
+      const targetInfo = e.target.tagName.toLowerCase() +
+        (e.target.id ? '#' + e.target.id : '') +
+        (e.target.className ? '.' + e.target.className.replace(/ /g, '.') : '');
+
+      const eventData = {
+        type: 'paste',
+        timestamp: new Date().toISOString(),
+        pastedText: pastedText,
+        targetInfo: targetInfo,
+        url: window.location.href
+      };
+
+      chrome.runtime.sendMessage({ action: "recordEvent", eventData });
     }
+  });
+
+  // Enhance keydown event listener to capture text input
+  document.addEventListener('keydown', function(e) {
+    if (recording) {
+      const targetInfo = e.target.tagName.toLowerCase() +
+        (e.target.id ? '#' + e.target.id : '') +
+        (e.target.className ? '.' + e.target.className.replace(/ /g, '.') : '') +
+        (e.target.type ? '[type="' + e.target.type + '"]' : '');
+
+      // Create event data with detailed text information
+      const eventData = {
+        type: 'keydown',
+        timestamp: new Date().toISOString(),
+        key: e.key,
+        targetInfo: targetInfo,
+        url: window.location.href,
+        isTextInput: e.target.tagName === 'INPUT' || 
+                    e.target.tagName === 'TEXTAREA' || 
+                    e.target.isContentEditable,
+        inputValue: e.target.value || e.target.textContent || '',
+        // Add cursor position for more detailed analysis
+        cursorPosition: getCursorPosition(e.target),
+        // Add field identifier
+        fieldIdentifier: getFieldIdentifier(e.target)
+      };
+
+      chrome.runtime.sendMessage({ action: "recordEvent", eventData });
+    }
+  });
+
+  if (resuming) {
+    console.log("Resuming recording. All event listeners re-attached.");
+  } else {
+    console.log("Recording started successfully. All event listeners attached.");
+  }
 }
 
-window.addEventListener('mouseover', () => {
-    // More specific check to ensure it's the main document area
-    // This basic version assumes any mouseover within the window means 'inside'
-    // For more complex scenarios with iframes, additional logic might be needed.
-    recordMouseStatusChangeEvent('inside');
-});
+function detachListeners() {
+  // Remove Mouse Event Listeners
+  document.removeEventListener('click', recordEvent, true);
+  document.removeEventListener('mousedown', recordEvent, true);
+  document.removeEventListener('mouseup', recordEvent, true);
+  document.removeEventListener('mousemove', recordEvent, true);
+  document.removeEventListener('contextmenu', recordEvent, true);
 
-window.addEventListener('mouseout', (e) => {
-    e = e || window.event;
-    var from = e.relatedTarget || e.toElement;
-    if (!from || from.nodeName === "HTML") {
-        recordMouseStatusChangeEvent('outside');
-    }
-});
+  // Remove Keyboard Event Listeners
+  document.removeEventListener('keydown', recordEvent, true);
+  document.removeEventListener('keyup', recordEvent, true);
+
+  // Remove Scroll Event Listener
+  document.removeEventListener('scroll', recordEvent, true);
+
+  //Form Events
+  document.removeEventListener('input', recordEvent, true);
+  document.removeEventListener('change', recordEvent, true);
+  document.removeEventListener('submit', recordEvent, true);
+
+  console.log("Event listeners detached.");
+}
+
+// ----- Mouse Inside/Outside Check -----
+// This code tracks whether the mouse is inside the window or not,
+// and records the state every second.
+let mouseInsideWindow = false;
+let mouseIntervals = [];  // New array to hold interval records
+
+window.onmouseout = function(e) {
+  e = e || window.event;
+  var from = e.relatedTarget || e.toElement;
+  if (!from || from.nodeName === "HTML") {
+    mouseInsideWindow = false;
+  }
+};
+
+window.onmouseover = function(e) {
+  mouseInsideWindow = true;
+};
+
+setInterval(() => {
+  const statusStr = mouseInsideWindow ? "inside" : "outside";
+  const intervalRecord = { timestamp: new Date().toISOString(), status: statusStr };
+  mouseIntervals.push(intervalRecord);
+  console.log("Mouse is " + statusStr + " the window.");
+}, 1000);
 
 // Listen for messages from the popup.
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -338,113 +434,4 @@ function getCursorPosition(element) {
 // Helper function to get a unique identifier for the input field
 function getFieldIdentifier(element) {
     return `${element.tagName.toLowerCase()}${element.id ? '#' + element.id : ''}${element.name ? '[name=' + element.name + ']' : ''}`;
-}
-
-function attachListeners(resuming) {
-  // Mouse Events
-  document.addEventListener('click', recordEvent, true);
-  document.addEventListener('mousedown', recordEvent, true);
-  document.addEventListener('mouseup', recordEvent, true);
-  document.addEventListener('mousemove', recordEvent, true);
-  document.addEventListener('contextmenu', recordEvent, true);
-
-  // Keyboard Events
-  document.addEventListener('keydown', recordEvent, true);
-  document.addEventListener('keyup', recordEvent, true);
-
-  // Scroll event
-  document.addEventListener('scroll', recordEvent, true);
-  
-  //Form Events
-  document.addEventListener('input', recordEvent, true);
-  document.addEventListener('change', recordEvent, true);
-  document.addEventListener('submit', recordEvent, true);
-
-  // Add paste event listener
-  document.addEventListener('paste', function(e) {
-    if (recording) {
-      const pastedText = e.clipboardData.getData('text');
-      const targetInfo = e.target.tagName.toLowerCase() +
-        (e.target.id ? '#' + e.target.id : '') +
-        (e.target.className ? '.' + e.target.className.replace(/ /g, '.') : '');
-
-      const eventData = {
-        type: 'paste',
-        timestamp: new Date().toISOString(),
-        pastedText: pastedText,
-        targetInfo: targetInfo,
-        url: window.location.href
-      };
-
-      chrome.runtime.sendMessage({ action: "recordEvent", eventData });
-    }
-  });
-
-  // Enhance keydown event listener to capture text input
-  document.addEventListener('keydown', function(e) {
-    if (recording) {
-      const targetInfo = e.target.tagName.toLowerCase() +
-        (e.target.id ? '#' + e.target.id : '') +
-        (e.target.className ? '.' + e.target.className.replace(/ /g, '.') : '') +
-        (e.target.type ? '[type="' + e.target.type + '"]' : '');
-
-      // Create event data with detailed text information
-      const eventData = {
-        type: 'keydown',
-        timestamp: new Date().toISOString(),
-        key: e.key,
-        targetInfo: targetInfo,
-        url: window.location.href,
-        isTextInput: e.target.tagName === 'INPUT' || 
-                    e.target.tagName === 'TEXTAREA' || 
-                    e.target.isContentEditable,
-        inputValue: e.target.value || e.target.textContent || '',
-        // Add cursor position for more detailed analysis
-        cursorPosition: getCursorPosition(e.target),
-        // Add field identifier
-        fieldIdentifier: getFieldIdentifier(e.target)
-      };
-
-      chrome.runtime.sendMessage({ action: "recordEvent", eventData });
-    }
-  });
-
-  if (!resuming) { // For a new recording session
-    console.log("Recording started successfully. All event listeners attached.");
-    // Add an initial mouse status event when recording starts
-    // This helps establish the state at the beginning of the recording period.
-    const initialStatus = document.hasFocus() ? 'inside' : 'outside';
-    // Use a slight delay to ensure this is after recordingStartTime is set, or pass recordingStartTime
-    // For simplicity, record immediately. This timestamp will be very close to recordingStartTime.
-    const initialTimestamp = new Date().toISOString();
-    mouseIntervals = []; // Clear any previous mouse intervals from a prior session segment if any
-    mouseIntervals.push({ timestamp: initialTimestamp, status: initialStatus });
-    console.log(`Initial mouse status: ${initialStatus} at ${initialTimestamp}`);
-
-  } else {
-    console.log("Resuming recording. All event listeners re-attached.");
-  }
-}
-
-function detachListeners() {
-  // Remove Mouse Event Listeners
-  document.removeEventListener('click', recordEvent, true);
-  document.removeEventListener('mousedown', recordEvent, true);
-  document.removeEventListener('mouseup', recordEvent, true);
-  document.removeEventListener('mousemove', recordEvent, true);
-  document.removeEventListener('contextmenu', recordEvent, true);
-
-  // Remove Keyboard Event Listeners
-  document.removeEventListener('keydown', recordEvent, true);
-  document.removeEventListener('keyup', recordEvent, true);
-
-  // Remove Scroll Event Listener
-  document.removeEventListener('scroll', recordEvent, true);
-
-  //Form Events
-  document.removeEventListener('input', recordEvent, true);
-  document.removeEventListener('change', recordEvent, true);
-  document.removeEventListener('submit', recordEvent, true);
-
-  console.log("Event listeners detached.");
 }
