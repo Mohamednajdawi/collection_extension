@@ -100,7 +100,7 @@ document.getElementById("analyzeBtn").addEventListener("click", () => {
     updateStatus("Gathering data for analysis...");
 
     let eventsLog = null;
-    let summarizedMouseIntervals = null;
+    let rawMouseIntervals = null;
 
     // 1. Get Event Log
     sendMessageToContent({ command: "getLog" }, (logResponse) => {
@@ -113,21 +113,11 @@ document.getElementById("analyzeBtn").addEventListener("click", () => {
         }
     });
 
-    // 2. Get Raw Mouse Intervals, then Summarize them
+    // 2. Get Raw Mouse Intervals (no longer summarizing them here)
     sendMessageToContent({ command: "getMouseIntervals" }, (mouseResponse) => {
         if (mouseResponse && mouseResponse.success) {
-            sendMessageToContent({ 
-                command: "summarizeMouseIntervals", 
-                intervals: mouseResponse.intervals 
-            }, (summaryResponse) => {
-                if (summaryResponse) { // summarizeMouseIntervals directly returns the summary object
-                    summarizedMouseIntervals = summaryResponse;
-                    checkIfAllDataFetched();
-                } else {
-                    console.error("Failed to get summarized mouse intervals:", summaryResponse);
-                    updateStatus("Error fetching summarized mouse data", 'error');
-                }
-            });
+            rawMouseIntervals = mouseResponse.intervals;
+            checkIfAllDataFetched();
         } else {
             console.error("Failed to get raw mouse intervals:", mouseResponse);
             updateStatus("Error fetching raw mouse data", 'error');
@@ -135,13 +125,13 @@ document.getElementById("analyzeBtn").addEventListener("click", () => {
     });
 
     function checkIfAllDataFetched() {
-        if (eventsLog !== null && summarizedMouseIntervals !== null) {
+        if (eventsLog !== null && rawMouseIntervals !== null) {
             updateStatus("Sending data to background for analysis...");
             chrome.runtime.sendMessage(
                 { 
                     action: "processEvents", 
                     eventsLog: eventsLog, 
-                    summarizedMouseIntervals: summarizedMouseIntervals 
+                    rawMouseIntervals: rawMouseIntervals
                 }, 
                 (analysisResponse) => {
                     if (analysisResponse) {
