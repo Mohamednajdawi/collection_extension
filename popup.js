@@ -99,70 +99,42 @@ document.getElementById("analyzeBtn").addEventListener("click", () => {
     console.log("Analyze button clicked");
     updateStatus("Gathering data for analysis...");
 
-    let eventsLog = null;
-    let summarizedMouseIntervals = null;
+    // Get eventsLog from chrome.storage.local (it now includes focus events from background.js)
+    chrome.storage.local.get(["eventsLog"], (result) => {
+        const eventsLogForAnalysis = result.eventsLog || [];
 
-    // 1. Get Event Log
-    sendMessageToContent({ command: "getLog" }, (logResponse) => {
-        if (logResponse && logResponse.success) {
-            eventsLog = logResponse.log;
-            checkIfAllDataFetched();
-        } else {
-            console.error("Failed to get log:", logResponse);
-            updateStatus("Error fetching event log for analysis", 'error');
+        if (eventsLogForAnalysis.length === 0) {
+            updateStatus("No events recorded to analyze.", 'error');
+            console.warn("No events in storage to analyze.");
+            return;
         }
-    });
 
-    // 2. Get Raw Mouse Intervals, then Summarize them
-    sendMessageToContent({ command: "getMouseIntervals" }, (mouseResponse) => {
-        if (mouseResponse && mouseResponse.success) {
-            sendMessageToContent({ 
-                command: "summarizeMouseIntervals", 
-                intervals: mouseResponse.intervals 
-            }, (summaryResponse) => {
-                if (summaryResponse) { // summarizeMouseIntervals directly returns the summary object
-                    summarizedMouseIntervals = summaryResponse;
-                    checkIfAllDataFetched();
+        updateStatus("Sending data to background for analysis...");
+        chrome.runtime.sendMessage(
+            { 
+                action: "processEvents", 
+                eventsLog: eventsLogForAnalysis
+                // summarizedMouseIntervals is no longer sent for this primary analysis
+            }, 
+            (analysisResponse) => {
+                if (analysisResponse) {
+                    console.log("Analysis complete:", analysisResponse);
+                    let analysisData = JSON.stringify(analysisResponse, null, 2);
+                    let blob = new Blob([analysisData], { type: "application/json" });
+                    let url = URL.createObjectURL(blob);
+                    let a = document.createElement("a");
+                    a.href = url;
+                    a.download = "session_analysis.json";
+                    a.click();
+                    URL.revokeObjectURL(url);
+                    updateStatus("Analysis complete and downloaded", 'success');
                 } else {
-                    console.error("Failed to get summarized mouse intervals:", summaryResponse);
-                    updateStatus("Error fetching summarized mouse data", 'error');
+                    console.error("Analysis failed in background script");
+                    updateStatus("Error analyzing session data", 'error');
                 }
-            });
-        } else {
-            console.error("Failed to get raw mouse intervals:", mouseResponse);
-            updateStatus("Error fetching raw mouse data", 'error');
-        }
+            }
+        );
     });
-
-    function checkIfAllDataFetched() {
-        if (eventsLog !== null && summarizedMouseIntervals !== null) {
-            updateStatus("Sending data to background for analysis...");
-            chrome.runtime.sendMessage(
-                { 
-                    action: "processEvents", 
-                    eventsLog: eventsLog, 
-                    summarizedMouseIntervals: summarizedMouseIntervals 
-                }, 
-                (analysisResponse) => {
-                    if (analysisResponse) {
-                        console.log("Analysis complete:", analysisResponse);
-                        let analysisData = JSON.stringify(analysisResponse, null, 2);
-                        let blob = new Blob([analysisData], { type: "application/json" });
-                        let url = URL.createObjectURL(blob);
-                        let a = document.createElement("a");
-                        a.href = url;
-                        a.download = "session_analysis.json";
-                        a.click();
-                        URL.revokeObjectURL(url);
-                        updateStatus("Analysis complete and downloaded", 'success');
-                    } else {
-                        console.error("Analysis failed in background script");
-                        updateStatus("Error analyzing session data", 'error');
-                    }
-                }
-            );
-        }
-    }
 });
 
 // Download Mouse Intervals button handler

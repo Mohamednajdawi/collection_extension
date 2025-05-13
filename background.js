@@ -20,24 +20,46 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             }
         });
     } else if (message.action === "processEvents") {
-        // Expect eventsLog and summarizedMouseIntervals from popup.js
-        const processedData = processEventLog(message.eventsLog || [], message.summarizedMouseIntervals || []);
-            sendResponse(processedData);
+        // Expect eventsLog (which now includes focus events)
+        // summarizedMouseIntervals is removed from here for now, as focus-based timing is prioritized
+        const processedData = processEventLog(message.eventsLog || []); 
+        sendResponse(processedData);
         return true; // For async response
     }
     return true;
 });
 
+// Listener for window focus changes
+chrome.windows.onFocusChanged.addListener((windowId) => {
+    chrome.storage.local.get(["recording", "eventsLog"], (result) => {
+        // Only record focus changes if a recording session is active
+        if (result.recording) {
+            const isFocused = windowId !== chrome.windows.WINDOW_ID_NONE && windowId !== undefined;
+            const focusEventData = {
+                type: 'window_focus_change',
+                timestamp: new Date().toISOString(),
+                focused: isFocused,
+                windowId: windowId // Store windowId for debugging or future use
+            };
+            
+            let updatedEventsLog = result.eventsLog || [];
+            updatedEventsLog.push(focusEventData);
+            chrome.storage.local.set({ eventsLog: updatedEventsLog });
+            console.log('Window focus change event recorded:', focusEventData);
+        }
+    });
+});
+
 // Helper to initialize the main stats object
 function initializeStats(events) {
-    const firstEvent = events[0] || {};
-    const lastEvent = events[events.length - 1] || {};
+    const firstEvent = events.find(e => e.type !== 'window_focus_change') || events[0] || {};
+    const lastEvent = events.length > 0 ? events[events.length - 1] : {}; // Consider all events for end time
 
     return {
-        totalEvents: events.length,
+        totalEvents: events.filter(e => e.type !== 'window_focus_change').length, // Count non-focus events
         eventTypes: {},
         clicksByElement: {},
-        clickDetails: [], // New for detailed click events
+        clickDetails: [],
         keyboardStats: {
             totalKeystrokes: 0,
             mostUsedKeys: {}
@@ -48,16 +70,16 @@ function initializeStats(events) {
             clickHeatmap: []
         },
         timeStats: {
-            startTime: firstEvent.timestamp,
-            endTime: lastEvent.timestamp,
+            startTime: firstEvent.timestamp, // Based on first non-focus or absolute first event
+            endTime: lastEvent.timestamp,    // Based on absolute last event
             duration: 0,
             inactivityPeriods: 0,
-            timeInsideWindow: 0, // New
-            timeOutsideWindow: 0 // New
+            timeInsideChrome: 0, // New: Focus-based
+            timeOutsideChrome: 0 // New: Focus-based
         },
         pageStats: {
             uniqueUrls: new Set(),
-            uniqueTabNames: new Set(), // New
+            uniqueTabNames: new Set(),
             timePerPage: {}
         },
         textStats: {
@@ -81,7 +103,7 @@ function initializeStats(events) {
             fieldMetadata: {},
             inputSummary: []
         },
-        typingDetails: [] // New for detailed typing events
+        typingDetails: []
     };
 }
 
@@ -221,14 +243,19 @@ function handleGeneralEventTiming(event, timeStats, loopState) {
 }
 
 function processSingleEvent(event, stats, loopState) {
-    stats.eventTypes[event.type] = (stats.eventTypes[event.type] || 0) + 1;
+    // Skip processing for 'window_focus_change' here as it's handled in finalizeStats for time calculation
+    // and doesn't contribute to other event-specific counts like clicks or keydowns.
+    if (event.type === 'window_focus_change') {
+        // Optionally, count it in eventTypes if you want to see focus changes there
+        stats.eventTypes[event.type] = (stats.eventTypes[event.type] || 0) + 1;
+        return; 
+    }
 
+    stats.eventTypes[event.type] = (stats.eventTypes[event.type] || 0) + 1;
     handlePageTracking(event, stats.pageStats, loopState);
 
     if (event.type === 'click') {
         handleClickEvent(event, stats.mouseStats, stats.clicksByElement);
-        
-        // New: Populate clickDetails
         const targetType = event.targetInfo ? event.targetInfo.split('[')[0] : 'unknown';
         const targetValue = event.targetInfo || 'N/A';
         stats.clickDetails.push({
@@ -247,15 +274,15 @@ function processSingleEvent(event, stats, loopState) {
     }
 
     if (event.type === 'input' && event.targetInfo) {
-            const fieldId = event.fieldIdentifier || event.targetInfo;
+         const fieldId = event.fieldIdentifier || event.targetInfo;
          if (event.value !== undefined ) {
-                stats.textStats.finalValues[fieldId] = {
+            stats.textStats.finalValues[fieldId] = {
                 value: event.value,
-                    timestamp: event.timestamp,
-                    tabName: event.tabName,
-                    url: event.url,
-                    fieldInfo: event.targetInfo
-                };
+                timestamp: event.timestamp,
+                tabName: event.tabName,
+                url: event.url,
+                fieldInfo: event.targetInfo 
+            };
         }
     }
     handleGeneralEventTiming(event, stats.timeStats, loopState);
@@ -348,65 +375,140 @@ function finalizeTextAnalysis(textStats, loopState, allTypingDetails) {
         });
 }
 
+function calculateFocusTimes(allSortedEvents, stats) {
+    stats.timeStats.timeInsideChrome = 0;
+    stats.timeStats.timeOutsideChrome = 0;
 
-function finalizeStats(stats, loopState, events, summarizedMouseIntervals) {
-    if (stats.timeStats.startTime && stats.timeStats.endTime) {
-        stats.timeStats.duration = new Date(stats.timeStats.endTime) - new Date(stats.timeStats.startTime);
+    if (allSortedEvents.length === 0 || !stats.timeStats.startTime) {
+        return;
     }
 
+    let currentFocusState = true; // Default assumption: Chrome is focused at session start
+    let lastEventTime = new Date(stats.timeStats.startTime);
+
+    // Attempt to get a more accurate initial focus state if a focus event is logged
+    // at or very near the start of the session by the onFocusChanged listener.
+    const firstRecordedEvent = allSortedEvents[0];
+    if (firstRecordedEvent.type === 'window_focus_change' && 
+        new Date(firstRecordedEvent.timestamp).getTime() <= lastEventTime.getTime() + 500 // within 0.5s of start
+    ) {
+        currentFocusState = firstRecordedEvent.focused;
+        // If the first event IS a focus event at startTime, its duration effect is handled by the loop starting from startTime.
+        // lastEventTime should remain session startTime to correctly calculate the first segment.
+    }
+
+    for (const event of allSortedEvents) {
+        const eventTime = new Date(event.timestamp);
+
+        // Ensure we only process events within the session's start/end time bounds
+        if (eventTime < new Date(stats.timeStats.startTime)) continue;
+        if (stats.timeStats.endTime && eventTime > new Date(stats.timeStats.endTime)) {
+            // If we have an event past official endTime, process up to endTime and break
+            const durationMs = new Date(stats.timeStats.endTime) - lastEventTime;
+            if (durationMs > 0) {
+                if (currentFocusState) {
+                    stats.timeStats.timeInsideChrome += durationMs;
+                } else {
+                    stats.timeStats.timeOutsideChrome += durationMs;
+                }
+            }
+            lastEventTime = new Date(stats.timeStats.endTime);
+            break; 
+        }
+
+        const durationMs = eventTime - lastEventTime;
+
+        if (durationMs > 0) {
+            if (currentFocusState) {
+                stats.timeStats.timeInsideChrome += durationMs;
+            } else {
+                stats.timeStats.timeOutsideChrome += durationMs;
+            }
+        }
+
+        if (event.type === 'window_focus_change') {
+            currentFocusState = event.focused;
+        }
+        
+        lastEventTime = eventTime;
+    }
+
+    // After the last event processed in the loop, account for the time until session endTime
+    if (stats.timeStats.endTime) {
+        const sessionEndTime = new Date(stats.timeStats.endTime);
+        if (sessionEndTime > lastEventTime) { // If lastEventTime hasn't reached sessionEndTime
+            const finalDurationMs = sessionEndTime - lastEventTime;
+            if (currentFocusState) {
+                stats.timeStats.timeInsideChrome += finalDurationMs;
+            } else {
+                stats.timeStats.timeOutsideChrome += finalDurationMs;
+            }
+        }
+    }
+    
+    const totalFocusTime = stats.timeStats.timeInsideChrome + stats.timeStats.timeOutsideChrome;
+    if (stats.timeStats.duration > 0 && Math.abs(totalFocusTime - stats.timeStats.duration) > 1000) { 
+         console.warn(`Focus time calculation discrepancy: TotalFocusTime=${totalFocusTime}, SessionDuration=${stats.timeStats.duration}`);
+    }
+}
+
+function finalizeStats(stats, loopState, events) { // events here is the original sorted log for other stats
+    if (stats.timeStats.startTime && stats.timeStats.endTime) {
+        stats.timeStats.duration = new Date(stats.timeStats.endTime) - new Date(stats.timeStats.startTime);
+    } else if (events.length > 0) { // Fallback if endTime wasn't perfectly set by last event
+        const lastEv = events[events.length - 1];
+        if (lastEv) stats.timeStats.endTime = lastEv.timestamp;
+        if (stats.timeStats.startTime && stats.timeStats.endTime) {
+             stats.timeStats.duration = new Date(stats.timeStats.endTime) - new Date(stats.timeStats.startTime);
+        }
+    }
+
+    // Calculate focus-based times using ALL events from storage (including focus changes)
+    // This requires access to the full log as passed to processEventLog initially
+    // For simplicity, assuming 'events' passed to finalizeStats is the full unfiltered list here.
+    // If not, processEventLog needs to pass the original full list to finalizeStats too.
+    // Let's assume processEventLog ensures 'events' IS the full list from storage for this.
+    calculateFocusTimes(events, stats); 
+
     stats.pageStats.uniqueUrls = Array.from(stats.pageStats.uniqueUrls);
-    stats.pageStats.uniqueTabNames = Array.from(stats.pageStats.uniqueTabNames); // Convert Set to Array
+    stats.pageStats.uniqueTabNames = Array.from(stats.pageStats.uniqueTabNames);
 
     stats.keyboardStats.mostUsedKeys = Object.entries(stats.keyboardStats.mostUsedKeys)
         .sort(([, a], [, b]) => b - a)
         .reduce((r, [k, v]) => ({ ...r, [k]: v }), {});
-
+    
     if (loopState.currentField && loopState.fieldStartTime && events.length > 0) {
-        const lastEventTimestamp = events[events.length - 1].timestamp;
-        const timeInField = new Date(lastEventTimestamp) - new Date(loopState.fieldStartTime);
-        stats.textStats.fieldFocusTime[loopState.currentField] =
-            (stats.textStats.fieldFocusTime[loopState.currentField] || 0) + timeInField;
-    }
-
-    // Process summarizedMouseIntervals for timeInside/OutsideWindow
-    if (summarizedMouseIntervals && summarizedMouseIntervals.length > 0) {
-        summarizedMouseIntervals.forEach(interval => {
-            if (interval.status === 'inside') {
-                stats.timeStats.timeInsideWindow += (interval.durationSeconds * 1000); // Store in ms
-            } else if (interval.status === 'outside') {
-                stats.timeStats.timeOutsideWindow += (interval.durationSeconds * 1000); // Store in ms
-            }
-        });
+        const actualLastEvent = events.filter(e => e.type !== 'window_focus_change').pop();
+        if (actualLastEvent) {
+            const timeInField = new Date(actualLastEvent.timestamp) - new Date(loopState.fieldStartTime);
+            stats.textStats.fieldFocusTime[loopState.currentField] =
+                (stats.textStats.fieldFocusTime[loopState.currentField] || 0) + timeInField;
+        }
     }
 
     populateFieldMetadata(stats.textStats);
-    // Pass stats.typingDetails to be populated by finalizeTextAnalysis
     finalizeTextAnalysis(stats.textStats, loopState, stats.typingDetails);
 }
 
-
-function processEventLog(events, summarizedMouseIntervals) {
-    if (!events || events.length === 0) {
-        const emptyStats = initializeStats([]);
-        // Still process mouse intervals if they exist, even with no other events
-        if (summarizedMouseIntervals && summarizedMouseIntervals.length > 0) {
-             summarizedMouseIntervals.forEach(interval => {
-                if (interval.status === 'inside') {
-                    emptyStats.timeStats.timeInsideWindow += (interval.durationSeconds * 1000);
-                } else if (interval.status === 'outside') {
-                    emptyStats.timeStats.timeOutsideWindow += (interval.durationSeconds * 1000);
-                }
-            });
-        }
-        return emptyStats; 
+// processEventLog now takes only one 'events' argument (the full log from storage)
+function processEventLog(allEventsFromStorage) { 
+    if (!allEventsFromStorage || allEventsFromStorage.length === 0) {
+        return initializeStats([]);
     }
-    const stats = initializeStats(events);
+
+    // Sort all events by timestamp first, as focus events are mixed in
+    const sortedEvents = [...allEventsFromStorage].sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+    const stats = initializeStats(sortedEvents); // Initialize with sorted events for correct start/end times
     const loopState = initializeLoopState();
 
-    events.forEach(event => {
+    // Iterate through sorted events for general processing (clicks, keys, etc.)
+    // window_focus_change events will be skipped by processSingleEvent for detailed stats
+    sortedEvents.forEach(event => {
         processSingleEvent(event, stats, loopState);
     });
 
-    finalizeStats(stats, loopState, events, summarizedMouseIntervals);
+    // Pass the original sorted (and complete) list to finalizeStats for focus time calculation
+    finalizeStats(stats, loopState, sortedEvents);
     return stats;
 }
