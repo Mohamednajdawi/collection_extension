@@ -63,9 +63,15 @@ function recordEvent(e) {
           eventData.value = e.target.options[e.target.selectedIndex].value;
         } else if (e.target.type === 'checkbox' || e.target.type === 'radio') {
           eventData.value = e.target.checked;
+        } else if (e.target.isContentEditable) {
+          eventData.value = e.target.textContent;
         } else {
           eventData.value = e.target.value;
         }
+        eventData.fieldIdentifier = getFieldIdentifier(e.target);
+        eventData.isTextInput = e.target.tagName === 'INPUT' || 
+                                e.target.tagName === 'TEXTAREA' || 
+                                e.target.isContentEditable;
       }
 
       // Send the event data to the background script
@@ -103,15 +109,13 @@ window.addEventListener('popstate', () => {
 // Modify the startRecording function to better handle persistence
 function startRecording() {
   console.log("Starting recording...");
-  chrome.storage.local.get(["eventsLog"], (result) => {
-    let initialEventsLog = result.eventsLog || [];
-    chrome.storage.local.set({ 
-      recording: true, 
-      eventsLog: initialEventsLog,
-      recordingStartTime: Date.now() // Add timestamp to track session
-    }, () => {
-      attachListeners(true);
-    });
+  // No need to get the old eventsLog, we are starting fresh.
+  chrome.storage.local.set({ 
+    recording: true, 
+    eventsLog: [], // Always start with an empty log
+    recordingStartTime: Date.now() // Add timestamp to track session
+  }, () => {
+    attachListeners(false); // Indicate a new recording, not resuming
   });
 }
 
