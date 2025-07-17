@@ -25,15 +25,46 @@ function sendMessageToContent(message, callback) {
         }
         
         console.log("Sending message to content script:", message);
-        chrome.tabs.sendMessage(tabs[0].id, message, (response) => {
-            if (chrome.runtime.lastError) {
-                console.error("Message sending failed:", chrome.runtime.lastError);
-                updateStatus("Error: Content script not ready", 'error');
-                return;
-            }
-            console.log("Received response from content script:", response);
-            if (callback) callback(response);
-        });
+        
+        const attemptMessage = (retryCount = 0) => {
+            chrome.tabs.sendMessage(tabs[0].id, message, (response) => {
+                if (chrome.runtime.lastError) {
+                    console.error("Message sending failed:", chrome.runtime.lastError.message);
+                    
+                    // If content script not ready and we have retries left, try to inject it
+                    if (retryCount < 2 && chrome.runtime.lastError.message.includes("Receiving end does not exist")) {
+                        console.log("Content script not found, attempting to inject...");
+                        
+                        // Try to inject the content script
+                        chrome.scripting.executeScript({
+                            target: { tabId: tabs[0].id },
+                            files: ['content.js']
+                        }, () => {
+                            if (chrome.runtime.lastError) {
+                                console.error("Script injection failed:", chrome.runtime.lastError.message);
+                                updateStatus("Error: Cannot inject content script", 'error');
+                                return;
+                            }
+                            
+                            // Wait a bit for the script to initialize, then retry
+                            setTimeout(() => {
+                                console.log(`Retrying message (attempt ${retryCount + 1})`);
+                                attemptMessage(retryCount + 1);
+                            }, 500);
+                        });
+                    } else {
+                        updateStatus("Error: Content script not ready", 'error');
+                        if (callback) callback(null);
+                    }
+                    return;
+                }
+                
+                console.log("Received response from content script:", response);
+                if (callback) callback(response);
+            });
+        };
+        
+        attemptMessage();
     });
 }
 
@@ -137,49 +168,20 @@ document.getElementById("analyzeBtn").addEventListener("click", () => {
     });
 });
 
-// Download Mouse Intervals button handler
-document.getElementById("downloadMouseIntervalsBtn").addEventListener("click", () => {
-    console.log("Download Mouse Intervals button clicked");
-    updateStatus("Processing mouse data...");
-    sendMessageToContent({ command: "getMouseIntervals" }, (response) => {
-        if (response && response.success) {
-            const rawIntervals = response.intervals;
-            
-            sendMessageToContent({ command: "summarizeMouseIntervals", intervals: rawIntervals }, (summaryResponse) => {
-                const combinedData = {
-                    rawIntervals: rawIntervals,
-                    summaries: summaryResponse
-                };
-                
-                let intervalsData = JSON.stringify(combinedData, null, 2);
-                let blob = new Blob([intervalsData], { type: "application/json" });
-                let url = URL.createObjectURL(blob);
-                let a = document.createElement("a");
-                a.href = url;
-                a.download = "mouse_intervals_with_summaries.json";
-                a.click();
-                URL.revokeObjectURL(url);
-                updateStatus("Mouse data downloaded successfully", 'success');
-            });
-        } else {
-            console.error("Failed to get mouse intervals:", response);
-            updateStatus("Error downloading mouse data", 'error');
-        }
-    });
-});
+
 
 function updateButtonStates() {
     const startBtn = document.getElementById("startBtn");
     const stopBtn = document.getElementById("stopBtn");
     const downloadBtn = document.getElementById("downloadBtn");
     const analyzeBtn = document.getElementById("analyzeBtn");
-    const downloadMouseIntervalsBtn = document.getElementById("downloadMouseIntervalsBtn");
+    const clearLogBtn = document.getElementById("clearLogBtn");
 
     startBtn.disabled = !contentReady || isRecording;
     stopBtn.disabled = !isRecording;
     downloadBtn.disabled = !hasRecordedData || isRecording;
     analyzeBtn.disabled = !hasRecordedData || isRecording;
-    downloadMouseIntervalsBtn.disabled = !hasRecordedData || isRecording;
+    clearLogBtn.disabled = !hasRecordedData || isRecording;
 
     // Update recording state visual indicator
     stopBtn.setAttribute("data-recording", isRecording.toString());
@@ -222,23 +224,16 @@ chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
 });
 
 document.addEventListener('DOMContentLoaded', function () {
-  const startBurromButton = document.getElementById('startBurrom'); // Assuming 'startBurrom' is the ID of your button
-
-  if (startBurromButton) {
-    startBurromButton.addEventListener('click', function() {
-      // Send a message to content.js to clear the chat history
-      chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-        chrome.tabs.sendMessage(tabs[0].id, {action: "clearHistory"}, function(response) {
-          if(response && response.success){
-            console.log("Chat history cleared successfully");
-          } else {
-            console.error("Failed to clear chat history");
-          }
-        });
+  document.getElementById('clearLogBtn').addEventListener('click', function() {
+      // Clear the log in chrome.storage.local
+      chrome.storage.local.set({ eventsLog: [] }, function() {
+          console.log('Event log cleared.');
+          // Optionally, update the UI to reflect the cleared log
+          updateStatus("Event log has been cleared.", 'info');
+          hasRecordedData = false; // Reset the state
+          chrome.storage.local.set({ hasRecordedData: false });
+          updateButtonStates(); // Update button states
       });
-      // ... rest of your button click logic (e.g., starting the bot) ...
-    });
-  }
-  // ... rest of your popup.js code ...
+  });
 });
   

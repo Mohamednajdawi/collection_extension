@@ -20,11 +20,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             }
         });
     } else if (message.action === "processEvents") {
-        // Expect eventsLog (which now includes focus events)
-        // summarizedMouseIntervals is removed from here for now, as focus-based timing is prioritized
-        const processedData = processEventLog(message.eventsLog || []); 
-        sendResponse(processedData);
-        return true; // For async response
+        // Handle async processing properly
+        (async () => {
+            try {
+                console.log("Processing events, total:", message.eventsLog?.length || 0);
+                const processedData = await processEventLog(message.eventsLog || []); 
+                console.log("Processing complete, sending response:", processedData);
+                sendResponse(processedData);
+            } catch (error) {
+                console.error("Error processing events:", error);
+                sendResponse(null);
+            }
+        })();
+        return true; // Keep the message channel open for async response
     }
     return true;
 });
@@ -52,11 +60,23 @@ chrome.windows.onFocusChanged.addListener((windowId) => {
 
 // Helper to initialize the main stats object
 function initializeStats(events) {
-    const firstEvent = events.find(e => e.type !== 'window_focus_change') || events[0] || {};
+    // Define all focus-related event types that should be excluded from regular event counts
+    const focusEventTypes = [
+        'window_focus_change', 
+        'mouse_enter_chrome', 
+        'mouse_leave_chrome', 
+        'page_visibility_change', 
+        'window_focus', 
+        'window_blur'
+    ];
+    
+    // Find first and last non-focus events for proper timing
+    const nonFocusEvents = events.filter(e => !focusEventTypes.includes(e.type));
+    const firstEvent = nonFocusEvents[0] || events[0] || {};
     const lastEvent = events.length > 0 ? events[events.length - 1] : {}; // Consider all events for end time
 
     return {
-        totalEvents: events.filter(e => e.type !== 'window_focus_change').length, // Count non-focus events
+        totalEvents: nonFocusEvents.length, // Count only non-focus events
         eventTypes: {},
         clicksByElement: {},
         clickDetails: [],
@@ -243,10 +263,14 @@ function handleGeneralEventTiming(event, timeStats, loopState) {
 }
 
 function processSingleEvent(event, stats, loopState) {
-    // Skip processing for 'window_focus_change' here as it's handled in finalizeStats for time calculation
-    // and doesn't contribute to other event-specific counts like clicks or keydowns.
-    if (event.type === 'window_focus_change') {
-        // Optionally, count it in eventTypes if you want to see focus changes there
+    // Handle focus and mouse presence events for time calculation but don't count them in regular event stats
+    if (event.type === 'window_focus_change' || 
+        event.type === 'mouse_enter_chrome' || 
+        event.type === 'mouse_leave_chrome' ||
+        event.type === 'page_visibility_change' ||
+        event.type === 'window_focus' ||
+        event.type === 'window_blur') {
+        // Count these in eventTypes for visibility but don't process them further
         stats.eventTypes[event.type] = (stats.eventTypes[event.type] || 0) + 1;
         return; 
     }
@@ -265,7 +289,7 @@ function processSingleEvent(event, stats, loopState) {
             timestamp: event.timestamp,
             event_description: `Clicked on ${targetType} '${targetValue}' in tab '${event.tabName || 'Unknown Tab'}' at ${event.url || 'Unknown URL'}`
         });
-    } else if (event.type === 'keydown') {
+    } else if (event.type === 'keydown' || event.type === 'keydown_enhanced') {
         handleKeydownEvent(event, stats.keyboardStats, stats.textStats, loopState);
     } else if (event.type === 'mousemove') {
         handleMouseMoveEvent(event, stats.mouseStats);
@@ -383,30 +407,51 @@ function calculateFocusTimes(allSortedEvents, stats) {
         return;
     }
 
-    let currentFocusState = true; // Default assumption: Chrome is focused at session start
     let lastEventTime = new Date(stats.timeStats.startTime);
+    let windowFocused = true; // Default to true for window focus
+    let mousePresent = true; // Default to true for mouse presence
+    let pageVisible = true; // Default to true for page visibility
 
-    // Attempt to get a more accurate initial focus state if a focus event is logged
-    // at or very near the start of the session by the onFocusChanged listener.
-    const firstRecordedEvent = allSortedEvents[0];
-    if (firstRecordedEvent.type === 'window_focus_change' && 
-        new Date(firstRecordedEvent.timestamp).getTime() <= lastEventTime.getTime() + 500 // within 0.5s of start
-    ) {
-        currentFocusState = firstRecordedEvent.focused;
-        // If the first event IS a focus event at startTime, its duration effect is handled by the loop starting from startTime.
-        // lastEventTime should remain session startTime to correctly calculate the first segment.
+    // Find the first relevant events to set initial states correctly
+    const firstWindowFocusEvent = allSortedEvents.find(e => 
+        e.type === 'window_focus_change' || e.type === 'window_focus' || e.type === 'window_blur'
+    );
+    const firstMouseEvent = allSortedEvents.find(e => 
+        e.type === 'mouse_enter_chrome' || e.type === 'mouse_leave_chrome'
+    );
+    const firstVisibilityEvent = allSortedEvents.find(e => 
+        e.type === 'page_visibility_change'
+    );
+
+    // Set initial states based on first events
+    if (firstWindowFocusEvent) {
+        if (firstWindowFocusEvent.type === 'window_focus_change') {
+            windowFocused = firstWindowFocusEvent.focused;
+        } else if (firstWindowFocusEvent.type === 'window_focus') {
+            windowFocused = true;
+        } else if (firstWindowFocusEvent.type === 'window_blur') {
+            windowFocused = false;
+        }
+    }
+
+    if (firstMouseEvent) {
+        mousePresent = firstMouseEvent.mousePresent !== false;
+    }
+
+    if (firstVisibilityEvent) {
+        pageVisible = firstVisibilityEvent.visible !== false;
     }
 
     for (const event of allSortedEvents) {
         const eventTime = new Date(event.timestamp);
 
-        // Ensure we only process events within the session's start/end time bounds
         if (eventTime < new Date(stats.timeStats.startTime)) continue;
         if (stats.timeStats.endTime && eventTime > new Date(stats.timeStats.endTime)) {
-            // If we have an event past official endTime, process up to endTime and break
             const durationMs = new Date(stats.timeStats.endTime) - lastEventTime;
             if (durationMs > 0) {
-                if (currentFocusState) {
+                // User is considered "inside Chrome" if window is focused AND (mouse is present OR page is visible)
+                const isInsideChrome = windowFocused && (mousePresent || pageVisible);
+                if (isInsideChrome) {
                     stats.timeStats.timeInsideChrome += durationMs;
                 } else {
                     stats.timeStats.timeOutsideChrome += durationMs;
@@ -419,26 +464,40 @@ function calculateFocusTimes(allSortedEvents, stats) {
         const durationMs = eventTime - lastEventTime;
 
         if (durationMs > 0) {
-            if (currentFocusState) {
+            // User is considered "inside Chrome" if window is focused AND (mouse is present OR page is visible)
+            const isInsideChrome = windowFocused && (mousePresent || pageVisible);
+            if (isInsideChrome) {
                 stats.timeStats.timeInsideChrome += durationMs;
             } else {
                 stats.timeStats.timeOutsideChrome += durationMs;
             }
         }
 
+        // Update states based on event type
         if (event.type === 'window_focus_change') {
-            currentFocusState = event.focused;
+            windowFocused = event.focused;
+        } else if (event.type === 'window_focus') {
+            windowFocused = true;
+        } else if (event.type === 'window_blur') {
+            windowFocused = false;
+        } else if (event.type === 'mouse_enter_chrome') {
+            mousePresent = true;
+        } else if (event.type === 'mouse_leave_chrome') {
+            mousePresent = false;
+        } else if (event.type === 'page_visibility_change') {
+            pageVisible = event.visible;
         }
         
         lastEventTime = eventTime;
     }
 
-    // After the last event processed in the loop, account for the time until session endTime
+    // Handle final duration from last event to session end
     if (stats.timeStats.endTime) {
         const sessionEndTime = new Date(stats.timeStats.endTime);
-        if (sessionEndTime > lastEventTime) { // If lastEventTime hasn't reached sessionEndTime
+        if (sessionEndTime > lastEventTime) {
             const finalDurationMs = sessionEndTime - lastEventTime;
-            if (currentFocusState) {
+            const isInsideChrome = windowFocused && (mousePresent || pageVisible);
+            if (isInsideChrome) {
                 stats.timeStats.timeInsideChrome += finalDurationMs;
             } else {
                 stats.timeStats.timeOutsideChrome += finalDurationMs;
@@ -446,7 +505,10 @@ function calculateFocusTimes(allSortedEvents, stats) {
         }
     }
     
+    // Debug logging for verification
     const totalFocusTime = stats.timeStats.timeInsideChrome + stats.timeStats.timeOutsideChrome;
+    console.log(`Time calculation: Inside=${stats.timeStats.timeInsideChrome}ms, Outside=${stats.timeStats.timeOutsideChrome}ms, Total=${totalFocusTime}ms, Duration=${stats.timeStats.duration}ms`);
+    
     if (stats.timeStats.duration > 0 && Math.abs(totalFocusTime - stats.timeStats.duration) > 1000) { 
          console.warn(`Focus time calculation discrepancy: TotalFocusTime=${totalFocusTime}, SessionDuration=${stats.timeStats.duration}`);
     }
@@ -490,25 +552,99 @@ function finalizeStats(stats, loopState, events) { // events here is the origina
     finalizeTextAnalysis(stats.textStats, loopState, stats.typingDetails);
 }
 
-// processEventLog now takes only one 'events' argument (the full log from storage)
-function processEventLog(allEventsFromStorage) { 
-    if (!allEventsFromStorage || allEventsFromStorage.length === 0) {
+async function processEventLog(allEventsFromStorage) { 
+    try {
+        console.log("Starting event log processing...");
+        
+        if (!allEventsFromStorage || allEventsFromStorage.length === 0) {
+            console.log("No events to process, returning empty stats");
+            return initializeStats([]);
+        }
+
+        // Sort all events by timestamp first, as focus events are mixed in
+        const sortedEvents = [...allEventsFromStorage].sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
+        console.log("Sorted events count:", sortedEvents.length);
+
+        // Inject initial state events if they don't exist at the beginning
+        const firstEventTime = sortedEvents[0].timestamp;
+        const initialEvents = [];
+
+        // Check if we have initial state events
+        const hasInitialWindowFocus = sortedEvents.some(e => 
+            (e.type === 'window_focus_change' || e.type === 'window_focus' || e.type === 'window_blur') &&
+            new Date(e.timestamp).getTime() <= new Date(firstEventTime).getTime() + 100
+        );
+        
+        const hasInitialMouseEvent = sortedEvents.some(e => 
+            (e.type === 'mouse_enter_chrome' || e.type === 'mouse_leave_chrome') &&
+            new Date(e.timestamp).getTime() <= new Date(firstEventTime).getTime() + 100
+        );
+        
+        const hasInitialVisibilityEvent = sortedEvents.some(e => 
+            e.type === 'page_visibility_change' &&
+            new Date(e.timestamp).getTime() <= new Date(firstEventTime).getTime() + 100
+        );
+
+        // Inject missing initial state events with timestamps slightly before the first event
+        const initialTimestamp = new Date(new Date(firstEventTime).getTime() - 50).toISOString();
+
+        if (!hasInitialWindowFocus) {
+            // Simplified: assume focused initially (most common case when recording starts)
+            initialEvents.push({
+                type: 'window_focus_change',
+                timestamp: initialTimestamp,
+                focused: true,
+                windowId: -1
+            });
+        }
+
+        if (!hasInitialMouseEvent) {
+            // Assume mouse is present initially when recording starts
+            initialEvents.push({
+                type: 'mouse_enter_chrome',
+                timestamp: initialTimestamp,
+                mousePresent: true
+            });
+        }
+
+        if (!hasInitialVisibilityEvent) {
+            // Assume page is visible initially when recording starts
+            initialEvents.push({
+                type: 'page_visibility_change',
+                timestamp: initialTimestamp,
+                visible: true,
+                visibilityState: 'visible'
+            });
+        }
+
+        // Combine initial events with sorted events
+        const completeEventList = [...initialEvents, ...sortedEvents].sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
+        console.log("Complete event list count:", completeEventList.length);
+
+        const stats = initializeStats(completeEventList); // Initialize with complete sorted events for correct start/end times
+        const loopState = initializeLoopState();
+
+        // Iterate through complete event list for general processing
+        completeEventList.forEach(event => {
+            processSingleEvent(event, stats, loopState);
+        });
+
+        // Pass the complete event list to finalizeStats for focus time calculation
+        finalizeStats(stats, loopState, completeEventList);
+        
+        console.log("Event processing completed successfully");
+        console.log("Final stats preview:", {
+            totalEvents: stats.totalEvents,
+            timeInsideChrome: stats.timeStats.timeInsideChrome,
+            timeOutsideChrome: stats.timeStats.timeOutsideChrome,
+            duration: stats.timeStats.duration
+        });
+        
+        return stats;
+    } catch (error) {
+        console.error("Error in processEventLog:", error);
+        console.error("Stack trace:", error.stack);
+        // Return empty stats rather than throwing
         return initializeStats([]);
     }
-
-    // Sort all events by timestamp first, as focus events are mixed in
-    const sortedEvents = [...allEventsFromStorage].sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
-
-    const stats = initializeStats(sortedEvents); // Initialize with sorted events for correct start/end times
-    const loopState = initializeLoopState();
-
-    // Iterate through sorted events for general processing (clicks, keys, etc.)
-    // window_focus_change events will be skipped by processSingleEvent for detailed stats
-    sortedEvents.forEach(event => {
-        processSingleEvent(event, stats, loopState);
-    });
-
-    // Pass the original sorted (and complete) list to finalizeStats for focus time calculation
-    finalizeStats(stats, loopState, sortedEvents);
-    return stats;
 }
