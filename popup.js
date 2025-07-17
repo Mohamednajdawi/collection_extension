@@ -177,35 +177,144 @@ function updateButtonStates() {
     const analyzeBtn = document.getElementById("analyzeBtn");
     const clearLogBtn = document.getElementById("clearLogBtn");
 
-    startBtn.disabled = !contentReady || isRecording;
-    stopBtn.disabled = !isRecording;
-    downloadBtn.disabled = !hasRecordedData || isRecording;
-    analyzeBtn.disabled = !hasRecordedData || isRecording;
-    clearLogBtn.disabled = !hasRecordedData || isRecording;
+    const newStates = {
+        start: !contentReady || isRecording,
+        stop: !isRecording,
+        download: !hasRecordedData || isRecording,
+        analyze: !hasRecordedData || isRecording,
+        clear: !hasRecordedData || isRecording
+    };
+
+    startBtn.disabled = newStates.start;
+    stopBtn.disabled = newStates.stop;
+    downloadBtn.disabled = newStates.download;
+    analyzeBtn.disabled = newStates.analyze;
+    clearLogBtn.disabled = newStates.clear;
 
     // Update recording state visual indicator
     stopBtn.setAttribute("data-recording", isRecording.toString());
+    
+    console.log("Button states updated:", {
+        contentReady,
+        isRecording,
+        hasRecordedData,
+        buttonStates: {
+            startDisabled: newStates.start,
+            stopDisabled: newStates.stop,
+            downloadDisabled: newStates.download,
+            analyzeDisabled: newStates.analyze,
+            clearDisabled: newStates.clear
+        }
+    });
 }
 
 function setContentReady(tabId) {
     contentReady = true;
     contentTabId = tabId;
     
-    chrome.storage.local.get(["isRecording", "hasRecordedData"], (result) => {
-        isRecording = result.isRecording || false;
-        hasRecordedData = result.hasRecordedData || false;
-        updateButtonStates();
-    });
+    console.log("Setting content ready, checking storage state...");
     
-    updateStatus("Ready to record", 'success');
+    // Get state from storage and ensure consistency
+    chrome.storage.local.get(["recording", "isRecording", "hasRecordedData", "eventsLog"], (result) => {
+        console.log("Storage state retrieved:", result);
+        
+        // Check both 'recording' and 'isRecording' for compatibility
+        const storageRecording = result.recording || result.isRecording || false;
+        const storageHasData = result.hasRecordedData || (result.eventsLog && result.eventsLog.length > 0);
+        const eventCount = result.eventsLog ? result.eventsLog.length : 0;
+        
+        console.log("Computed state:", { storageRecording, storageHasData, eventCount });
+        
+        // Update local state to match storage
+        isRecording = storageRecording;
+        hasRecordedData = storageHasData;
+        
+        updateButtonStates();
+        
+        // Set appropriate status message
+        if (storageRecording) {
+            updateStatus("Recording in progress...", 'success');
+            console.log("Popup state: Recording in progress");
+        } else if (storageHasData && eventCount > 0) {
+            updateStatus(`Ready to analyze. ${eventCount} events captured.`, 'success');
+            console.log("Popup state: Ready to analyze with", eventCount, "events");
+        } else {
+            updateStatus("Ready to record", 'success');
+            console.log("Popup state: Ready to record");
+        }
+        
+        console.log("Final popup state:", { 
+            isRecording, 
+            hasRecordedData, 
+            eventCount,
+            buttonsState: {
+                start: !isRecording,
+                stop: isRecording,
+                download: hasRecordedData && !isRecording,
+                analyze: hasRecordedData && !isRecording
+            }
+        });
+    });
 }
 
 // Listen for the ready message from the content script
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.ready && sender.tab) {
         setContentReady(sender.tab.id);
+    } else if (message.action === "recordingStopped") {
+        // Handle recording stopped from floating button
+        console.log("Received recording stopped notification from content script");
+        
+        // Update local state
+        isRecording = false;
+        hasRecordedData = message.hasData || true;
+        
+        // Update storage
+        chrome.storage.local.set({ 
+            isRecording: false, 
+            hasRecordedData: true 
+        }, () => {
+            // Update UI
+            updateButtonStates();
+            updateStatus("Recording stopped via floating button", 'success');
+            
+            // Get event count for status
+            chrome.storage.local.get(["eventsLog"], (result) => {
+                const eventCount = result.eventsLog ? result.eventsLog.length : 0;
+                updateStatus(`Recording stopped. ${eventCount} events captured.`, 'success');
+            });
+        });
     }
 });
+
+// Add a function to force refresh the popup state (useful for debugging)
+function forceRefreshState() {
+    console.log("Force refreshing popup state...");
+    chrome.storage.local.get(["recording", "isRecording", "hasRecordedData", "eventsLog"], (result) => {
+        console.log("Current storage contents:", result);
+        
+        const actualRecording = result.recording || result.isRecording || false;
+        const actualHasData = result.hasRecordedData || (result.eventsLog && result.eventsLog.length > 0);
+        
+        console.log("Before update:", { isRecording, hasRecordedData });
+        
+        isRecording = actualRecording;
+        hasRecordedData = actualHasData;
+        
+        console.log("After update:", { isRecording, hasRecordedData });
+        
+        updateButtonStates();
+        
+        const eventCount = result.eventsLog ? result.eventsLog.length : 0;
+        if (actualRecording) {
+            updateStatus("Recording in progress...", 'success');
+        } else if (actualHasData && eventCount > 0) {
+            updateStatus(`Ready to analyze. ${eventCount} events captured.`, 'success');
+        } else {
+            updateStatus("Ready to record", 'success');
+        }
+    });
+}
 
 // Check content script status when popup opens
 chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
@@ -214,8 +323,16 @@ chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
             if (chrome.runtime.lastError) {
                 console.log("Content script not yet loaded in this tab.");
                 updateStatus("Content script not ready", 'error');
+                
+                // Even if content script isn't ready, try to refresh state from storage
+                setTimeout(forceRefreshState, 100);
             } else if (response && response.pong) {
                 setContentReady(tabs[0].id);
+                
+                // Double-check state from storage when popup opens
+                setTimeout(() => {
+                    forceRefreshState();
+                }, 100);
             }
         });
     } else {

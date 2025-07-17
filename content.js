@@ -20,7 +20,21 @@ function initializeContentScript() {
         if (result.recording) {
             console.log("Resuming recording from previous session");
             recording = true;
-            attachListeners(true);
+            
+            // Attach listeners
+            try {
+                attachListeners(true);
+            } catch (error) {
+                console.error("Error attaching listeners during resume:", error);
+            }
+            
+            // Show floating stop button
+            try {
+                createFloatingStopButton();
+                console.log("Floating stop button restored after page navigation");
+            } catch (error) {
+                console.error("Error creating floating button during resume:", error);
+            }
         }
     });
     
@@ -216,8 +230,18 @@ function handleUrlChange() {
                 
                 // Small delay to ensure page elements are ready
                 setTimeout(() => {
-                    detachListeners();
-                    attachListeners(true);
+                    try {
+                        detachListeners();
+                        attachListeners(true);
+                        
+                        // Recreate floating button after navigation
+                        if (!floatingButton) {
+                            createFloatingStopButton();
+                            console.log("Floating stop button recreated after URL change");
+                        }
+                    } catch (error) {
+                        console.error("Error during URL change handling:", error);
+                    }
                 }, 100);
             }
         });
@@ -289,6 +313,14 @@ function startRecording() {
         console.error("Error attaching listeners:", error);
         recording = false;
         chrome.storage.local.set({ recording: false });
+        return;
+    }
+    
+    // Show floating stop button
+    try {
+        createFloatingStopButton();
+    } catch (error) {
+        console.error("Error creating floating button:", error);
     }
   });
 }
@@ -333,6 +365,13 @@ function captureInitialState() {
 function stopRecording() {
   console.log("Stopping recording...");
   recording = false;
+  
+  // Remove floating button first
+  try {
+    removeFloatingStopButton();
+  } catch (error) {
+    console.error("Error removing floating button:", error);
+  }
   
   chrome.storage.local.set({ recording: false }, () => {
     if (chrome.runtime.lastError) {
@@ -511,6 +550,203 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   
   return true; // Keep the message channel open for async responses.
 });
+
+// Floating stop button functionality
+let floatingButton = null;
+
+function createFloatingStopButton() {
+    // Remove existing button if any
+    removeFloatingStopButton();
+    
+    // Create the floating button
+    floatingButton = document.createElement('div');
+    floatingButton.id = 'session-recorder-stop-btn';
+    floatingButton.innerHTML = `
+        <div class="stop-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
+                <path d="M6 6h12v12H6z"/>
+            </svg>
+        </div>
+        <span class="stop-text">Stop Recording</span>
+    `;
+    
+    // Apply styles
+    floatingButton.style.cssText = `
+        position: fixed !important;
+        top: 20px !important;
+        right: 20px !important;
+        z-index: 999999 !important;
+        background: linear-gradient(135deg, #ff4757, #ff3838) !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 25px !important;
+        padding: 12px 20px !important;
+        cursor: pointer !important;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+        font-size: 14px !important;
+        font-weight: 600 !important;
+        box-shadow: 0 4px 15px rgba(255, 71, 87, 0.4) !important;
+        display: flex !important;
+        align-items: center !important;
+        gap: 8px !important;
+        transition: all 0.3s ease !important;
+        user-select: none !important;
+        backdrop-filter: blur(10px) !important;
+        animation: slideInFromRight 0.5s ease-out !important;
+    `;
+    
+    // Add hover effects
+    floatingButton.addEventListener('mouseenter', () => {
+        floatingButton.style.transform = 'scale(1.05)';
+        floatingButton.style.boxShadow = '0 6px 20px rgba(255, 71, 87, 0.6)';
+    });
+    
+    floatingButton.addEventListener('mouseleave', () => {
+        floatingButton.style.transform = 'scale(1)';
+        floatingButton.style.boxShadow = '0 4px 15px rgba(255, 71, 87, 0.4)';
+    });
+    
+    // Add click handler
+    floatingButton.addEventListener('click', () => {
+        console.log("Floating stop button clicked");
+        
+        // Add click animation
+        floatingButton.style.transform = 'scale(0.95)';
+        setTimeout(() => {
+            floatingButton.style.transform = 'scale(1)';
+        }, 150);
+        
+        // Stop recording and ensure storage is updated
+        stopRecording();
+        
+        // Force update storage state immediately
+        chrome.storage.local.set({ 
+            recording: false,
+            isRecording: false,
+            hasRecordedData: true
+        }, () => {
+            console.log("Storage updated after floating button click");
+            
+            // Get final event count for confirmation
+            chrome.storage.local.get(["eventsLog"], (result) => {
+                const eventCount = result.eventsLog ? result.eventsLog.length : 0;
+                console.log(`Recording stopped via floating button. ${eventCount} events captured.`);
+                
+                // Show confirmation
+                showStopConfirmation();
+                
+                // Try to notify popup if it's open (this might fail if popup is closed, which is fine)
+                try {
+                    chrome.runtime.sendMessage({ 
+                        action: "recordingStopped", 
+                        hasData: true,
+                        eventCount: eventCount
+                    });
+                    console.log("Sent recording stopped notification to popup");
+                } catch (error) {
+                    console.log("Could not notify popup (likely closed):", error);
+                }
+            });
+        });
+    });
+    
+    // Add CSS animations
+    const style = document.createElement('style');
+    style.textContent = `
+        @keyframes slideInFromRight {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+        
+        @keyframes slideOutToRight {
+            from {
+                transform: translateX(0);
+                opacity: 1;
+            }
+            to {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+        }
+        
+        #session-recorder-stop-btn .stop-text {
+            white-space: nowrap !important;
+        }
+        
+        @media (max-width: 768px) {
+            #session-recorder-stop-btn {
+                padding: 10px 16px !important;
+                font-size: 12px !important;
+            }
+            #session-recorder-stop-btn .stop-text {
+                display: none !important;
+            }
+        }
+    `;
+    document.head.appendChild(style);
+    
+    // Append to body
+    document.body.appendChild(floatingButton);
+    
+    console.log("Floating stop button created");
+}
+
+function removeFloatingStopButton() {
+    if (floatingButton) {
+        // Add exit animation
+        floatingButton.style.animation = 'slideOutToRight 0.3s ease-in';
+        
+        setTimeout(() => {
+            if (floatingButton && floatingButton.parentNode) {
+                floatingButton.parentNode.removeChild(floatingButton);
+            }
+            floatingButton = null;
+        }, 300);
+        
+        console.log("Floating stop button removed");
+    }
+}
+
+function showStopConfirmation() {
+    // Create a temporary confirmation message
+    const confirmation = document.createElement('div');
+    confirmation.innerHTML = '✓ Recording Stopped';
+    confirmation.style.cssText = `
+        position: fixed !important;
+        top: 20px !important;
+        right: 20px !important;
+        z-index: 1000000 !important;
+        background: #2ed573 !important;
+        color: white !important;
+        padding: 12px 20px !important;
+        border-radius: 25px !important;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+        font-size: 14px !important;
+        font-weight: 600 !important;
+        box-shadow: 0 4px 15px rgba(46, 213, 115, 0.4) !important;
+        animation: slideInFromRight 0.3s ease-out !important;
+    `;
+    
+    document.body.appendChild(confirmation);
+    
+    // Remove after 3 seconds
+    setTimeout(() => {
+        if (confirmation && confirmation.parentNode) {
+            confirmation.style.animation = 'slideOutToRight 0.3s ease-in';
+            setTimeout(() => {
+                if (confirmation.parentNode) {
+                    confirmation.parentNode.removeChild(confirmation);
+                }
+            }, 300);
+        }
+    }, 3000);
+}
 
 // Helper function to get descriptive target information.
 function getTargetInfo(target) {
