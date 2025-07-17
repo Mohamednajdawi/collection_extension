@@ -168,6 +168,244 @@ document.getElementById("analyzeBtn").addEventListener("click", () => {
     });
 });
 
+// AI Summary button handler
+document.getElementById("aiSummaryBtn").addEventListener("click", () => {
+    console.log("AI Summary button clicked");
+    generateAISummary();
+});
+
+// Function to generate AI summary using OpenAI
+async function generateAISummary() {
+    updateStatus("Generating AI summary...", 'info');
+    
+    try {
+        // Get session analysis data
+        chrome.storage.local.get(["eventsLog"], (result) => {
+            const eventsLogForAnalysis = result.eventsLog || [];
+
+            if (eventsLogForAnalysis.length === 0) {
+                updateStatus("No events recorded to summarize.", 'error');
+                return;
+            }
+
+            // Process events to get analysis data
+            chrome.runtime.sendMessage(
+                { 
+                    action: "processEvents", 
+                    eventsLog: eventsLogForAnalysis
+                }, 
+                async (analysisResponse) => {
+                    if (analysisResponse) {
+                        console.log("Analysis data for AI:", analysisResponse);
+                        
+                        // Call OpenAI API
+                        const aiSummary = await callOpenAI(analysisResponse);
+                        
+                        if (aiSummary) {
+                            displayAISummary(aiSummary);
+                            updateStatus("AI summary generated successfully", 'success');
+                        } else {
+                            updateStatus("Failed to generate AI summary", 'error');
+                        }
+                    } else {
+                        updateStatus("Error processing data for AI summary", 'error');
+                    }
+                }
+            );
+        });
+    } catch (error) {
+        console.error("Error generating AI summary:", error);
+        updateStatus("Error generating AI summary", 'error');
+    }
+}
+
+// Function to call OpenAI API
+async function callOpenAI(analysisData) {
+    try {
+        // Check if API key is configured
+        if (!OPENAI_CONFIG.API_KEY || OPENAI_CONFIG.API_KEY === 'your_openai_api_key_here') {
+            updateStatus("Please configure OpenAI API key in config.js", 'error');
+            return null;
+        }
+
+        const prompt = createPromptFromAnalysis(analysisData);
+        
+        const response = await fetch(OPENAI_CONFIG.API_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${OPENAI_CONFIG.API_KEY}`
+            },
+            body: JSON.stringify({
+                model: OPENAI_CONFIG.MODEL,
+                messages: [
+                    {
+                        role: "system",
+                        content: "You are an expert at analyzing user behavior and computer usage patterns. Provide clear, actionable insights about productivity, focus patterns, and recommendations for improvement."
+                    },
+                    {
+                        role: "user",
+                        content: prompt
+                    }
+                ],
+                max_tokens: OPENAI_CONFIG.MAX_TOKENS,
+                temperature: OPENAI_CONFIG.TEMPERATURE
+            })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            console.error("OpenAI API error:", errorData);
+            updateStatus(`OpenAI API error: ${response.status}`, 'error');
+            return null;
+        }
+
+        const data = await response.json();
+        return data.choices[0].message.content;
+        
+    } catch (error) {
+        console.error("Error calling OpenAI API:", error);
+        updateStatus("Network error calling OpenAI API", 'error');
+        return null;
+    }
+}
+
+// Function to create a prompt from analysis data
+function createPromptFromAnalysis(analysis) {
+    const duration = Math.round(analysis.timeStats.duration / 1000 / 60); // Convert to minutes
+    const timeInside = Math.round(analysis.timeStats.timeInsideChrome / 1000 / 60);
+    const timeOutside = Math.round(analysis.timeStats.timeOutsideChrome / 1000 / 60);
+    
+    return `Please analyze this user session data and provide insights:
+
+the main goal is to provide insights on how to improve the user's productivity and focus
+summary should include the time spent inside and outside chrome, the most clicked elements, the most used keys, and the most visited pages
+the summary should be in a concise and actionable format, with clear recommendations for improvement
+the summary should be in a friendly and engaging tone, with a touch of humor and personality
+the summary should be in a concise and actionable format, with clear recommendations for improvement
+
+SESSION OVERVIEW:
+- Duration: ${duration} minutes
+- Time focused on browser: ${timeInside} minutes
+- Time away from browser: ${timeOutside} minutes
+- Total events captured: ${analysis.totalEvents}
+
+ACTIVITY BREAKDOWN:
+- Mouse clicks: ${analysis.mouseStats.totalClicks}
+- Keyboard inputs: ${analysis.keyboardStats.totalKeystrokes}
+- Pages visited: ${analysis.pageStats.uniqueUrls.length}
+- Mouse movement distance: ${Math.round(analysis.mouseStats.totalMovement)} pixels
+- clickDetails: ${JSON.stringify(analysis.clickDetails)}
+- timeStats: ${JSON.stringify(analysis.timeStats)}
+- pageStats: ${JSON.stringify(analysis.pageStats)}
+- keyboardStats: ${JSON.stringify(analysis.keyboardStats)}
+- mouseStats: ${JSON.stringify(analysis.mouseStats)}
+- textStats: ${JSON.stringify(analysis.textStats)}
+- clicksByElement: ${JSON.stringify(analysis.clicksByElement)}
+- mostUsedKeys: ${JSON.stringify(analysis.keyboardStats.mostUsedKeys)}
+
+TYPING ACTIVITY:
+- Words typed: ${analysis.textStats.totalWordsTyped}
+- Characters typed: ${analysis.textStats.totalCharactersTyped}
+- Average typing speed: ${analysis.textStats.typingSpeed.averageWPM} WPM
+- Total deletions: ${analysis.textStats.deletions}
+
+MOST CLICKED ELEMENTS:
+${Object.entries(analysis.clicksByElement).slice(0, 5).map(([element, count]) => `- ${element}: ${count} clicks`).join('\n')}
+
+MOST USED KEYS:
+${Object.entries(analysis.keyboardStats.mostUsedKeys).slice(0, 10).map(([key, count]) => `- "${key}": ${count} times`).join('\n')}
+
+Please provide:
+1. A brief summary of the session
+2. Productivity insights and patterns
+3. List of websites and list of typed sentences
+
+
+Keep the response concise but insightful, focusing on actionable recommendations.`;
+}
+
+// Function to display AI summary in a modal
+function displayAISummary(summary) {
+    // Create modal overlay
+    const modal = document.createElement('div');
+    modal.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.8);
+        z-index: 10000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        box-sizing: border-box;
+    `;
+    
+    // Create modal content
+    const modalContent = document.createElement('div');
+    modalContent.style.cssText = `
+        background: white;
+        border-radius: 12px;
+        padding: 24px;
+        max-width: 600px;
+        max-height: 80vh;
+        overflow-y: auto;
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        line-height: 1.6;
+    `;
+    
+    modalContent.innerHTML = `
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid #eee; padding-bottom: 15px;">
+            <h2 style="margin: 0; color: #333; font-size: 24px;">🤖 AI Session Summary</h2>
+            <button id="closeModal" style="background: none; border: none; font-size: 24px; cursor: pointer; color: #666; padding: 0; width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; transition: background-color 0.2s;">×</button>
+        </div>
+        <div style="white-space: pre-wrap; color: #444; font-size: 14px;">${summary}</div>
+        <div style="margin-top: 20px; text-align: right;">
+            <button id="downloadSummary" style="background: #4CAF50; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; margin-right: 10px; font-size: 14px;">Download Summary</button>
+            <button id="closeSummary" style="background: #666; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px;">Close</button>
+        </div>
+    `;
+    
+    modal.appendChild(modalContent);
+    document.body.appendChild(modal);
+    
+    // Add hover effect to close button
+    const closeBtn = modalContent.querySelector('#closeModal');
+    closeBtn.addEventListener('mouseenter', () => {
+        closeBtn.style.backgroundColor = '#f0f0f0';
+    });
+    closeBtn.addEventListener('mouseleave', () => {
+        closeBtn.style.backgroundColor = 'transparent';
+    });
+    
+    // Close modal handlers
+    const closeModal = () => {
+        if (modal.parentNode) {
+            modal.parentNode.removeChild(modal);
+        }
+    };
+    
+    modalContent.querySelector('#closeModal').addEventListener('click', closeModal);
+    modalContent.querySelector('#closeSummary').addEventListener('click', closeModal);
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) closeModal();
+    });
+    
+    // Download summary handler
+    modalContent.querySelector('#downloadSummary').addEventListener('click', () => {
+        const blob = new Blob([summary], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'ai_session_summary.txt';
+        a.click();
+        URL.revokeObjectURL(url);
+    });
+}
 
 
 function updateButtonStates() {
@@ -175,6 +413,7 @@ function updateButtonStates() {
     const stopBtn = document.getElementById("stopBtn");
     const downloadBtn = document.getElementById("downloadBtn");
     const analyzeBtn = document.getElementById("analyzeBtn");
+    const aiSummaryBtn = document.getElementById("aiSummaryBtn");
     const clearLogBtn = document.getElementById("clearLogBtn");
 
     const newStates = {
@@ -182,6 +421,7 @@ function updateButtonStates() {
         stop: !isRecording,
         download: !hasRecordedData || isRecording,
         analyze: !hasRecordedData || isRecording,
+        aiSummary: !hasRecordedData || isRecording,
         clear: !hasRecordedData || isRecording
     };
 
@@ -189,6 +429,7 @@ function updateButtonStates() {
     stopBtn.disabled = newStates.stop;
     downloadBtn.disabled = newStates.download;
     analyzeBtn.disabled = newStates.analyze;
+    aiSummaryBtn.disabled = newStates.aiSummary;
     clearLogBtn.disabled = newStates.clear;
 
     // Update recording state visual indicator
@@ -203,6 +444,7 @@ function updateButtonStates() {
             stopDisabled: newStates.stop,
             downloadDisabled: newStates.download,
             analyzeDisabled: newStates.analyze,
+            aiSummaryDisabled: newStates.aiSummary,
             clearDisabled: newStates.clear
         }
     });

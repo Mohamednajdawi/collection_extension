@@ -1,12 +1,15 @@
 {
     "manifest_version": 3,
     "name": "Session Recorder",
-    "version": "1.0.1",
+    "version": "1.0",
     "description": "Records keyboard and mouse events in the current session when started.",
     "permissions": [
         "activeTab",
         "scripting",
         "storage"
+    ],
+    "host_permissions": [
+        "https://api.openai.com/*"
     ],
     "action": {
         "default_popup": "popup.html",
@@ -24,6 +27,16 @@
                 "content.js"
             ],
             "run_at": "document_idle"
+        }
+    ],
+    "web_accessible_resources": [
+        {
+            "resources": [
+                "config.js"
+            ],
+            "matches": [
+                "<all_urls>"
+            ]
         }
     ]
 }
