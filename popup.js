@@ -7,12 +7,19 @@ let hasRecordedData = false;
 function updateStatus(message, type = 'info') {
     const statusEl = document.getElementById("status");
     statusEl.textContent = message;
-    statusEl.className = ''; // Reset classes
+    statusEl.className = 'status'; // Reset to base class
     
-    if (type === 'success') {
-        statusEl.classList.add('status-success');
-    } else if (type === 'error') {
-        statusEl.classList.add('status-error');
+    if (message) {
+        statusEl.classList.add('show');
+        if (type === 'success') {
+            statusEl.classList.add('success');
+        } else if (type === 'error') {
+            statusEl.classList.add('error');
+        } else if (type === 'warning') {
+            statusEl.classList.add('warning');
+        }
+    } else {
+        statusEl.classList.remove('show');
     }
 }
 
