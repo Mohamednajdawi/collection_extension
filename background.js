@@ -457,7 +457,7 @@ function calculateFocusTimes(allSortedEvents, stats) {
         
         // If window is not focused, check for recent mouse activity
         if (!focused && mousePresent) {
-            // Would return TRUE here - mouse present during temporary focus loss
+            // Would return TRUE here - mouse present during temporary focus loss-
             return true;
         }
         
