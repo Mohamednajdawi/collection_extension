@@ -133,83 +133,208 @@ function recordEvent(e) {
   });
 }
 
-// Handler for mouse enter events
+// Enhanced mouse tracking with debouncing
+let mouseEnterTimeout = null;
+let mouseLeaveTimeout = null;
+let lastMouseEvent = null;
+const MOUSE_EVENT_DEBOUNCE = 1000; // 1 second debounce
+
+// Handler for mouse enter events with improved detection
 function handleMouseEnter(e) {
   chrome.storage.local.get(["recording"], (result) => {
     if (result.recording) {
-      const eventData = {
-        type: 'mouse_enter_chrome',
-        timestamp: new Date().toISOString(),
-        url: window.location.href,
-        tabName: document.title,
-        mousePresent: true
-      };
-      chrome.runtime.sendMessage({ action: "recordEvent", eventData: eventData });
+      // Clear any pending mouse leave event
+      if (mouseLeaveTimeout) {
+        clearTimeout(mouseLeaveTimeout);
+        mouseLeaveTimeout = null;
+      }
+      
+      // Debounce rapid enter events
+      if (lastMouseEvent && lastMouseEvent.type === 'enter' && 
+          Date.now() - lastMouseEvent.timestamp < MOUSE_EVENT_DEBOUNCE) {
+        return;
+      }
+      
+      // Only send if we're actually entering from outside the document
+      if (e.relatedTarget === null || !document.contains(e.relatedTarget)) {
+        const eventData = {
+          type: 'mouse_enter_chrome',
+          timestamp: new Date().toISOString(),
+          url: window.location.href,
+          tabName: document.title,
+          mousePresent: true,
+          fromElement: e.relatedTarget ? 'internal' : 'external'
+        };
+        
+        chrome.runtime.sendMessage({ action: "recordEvent", eventData: eventData });
+        lastMouseEvent = { type: 'enter', timestamp: Date.now() };
+      }
     }
   });
 }
 
-// Handler for mouse leave events
+// Handler for mouse leave events with improved detection
 function handleMouseLeave(e) {
   chrome.storage.local.get(["recording"], (result) => {
     if (result.recording) {
-      const eventData = {
-        type: 'mouse_leave_chrome',
-        timestamp: new Date().toISOString(),
-        url: window.location.href,
-        tabName: document.title,
-        mousePresent: false
-      };
-      chrome.runtime.sendMessage({ action: "recordEvent", eventData: eventData });
+      // Clear any pending mouse enter event
+      if (mouseEnterTimeout) {
+        clearTimeout(mouseEnterTimeout);
+        mouseEnterTimeout = null;
+      }
+      
+      // Debounce mouse leave events to avoid false positives
+      mouseLeaveTimeout = setTimeout(() => {
+        // Only send if we're actually leaving to outside the document
+        if (e.relatedTarget === null || !document.contains(e.relatedTarget)) {
+          // Additional check: make sure we're not just moving to browser UI
+          const rect = document.documentElement.getBoundingClientRect();
+          const isLeavingWindow = e.clientY < 0 || e.clientY > window.innerHeight || 
+                                 e.clientX < 0 || e.clientX > window.innerWidth;
+          
+          if (isLeavingWindow) {
+            const eventData = {
+              type: 'mouse_leave_chrome',
+              timestamp: new Date().toISOString(),
+              url: window.location.href,
+              tabName: document.title,
+              mousePresent: false,
+              toElement: e.relatedTarget ? 'internal' : 'external',
+              coordinates: { x: e.clientX, y: e.clientY }
+            };
+            
+            chrome.runtime.sendMessage({ action: "recordEvent", eventData: eventData });
+            lastMouseEvent = { type: 'leave', timestamp: Date.now() };
+          }
+        }
+        mouseLeaveTimeout = null;
+      }, MOUSE_EVENT_DEBOUNCE);
     }
   });
 }
 
-// Handler for visibility change events
+// Enhanced visibility change handler with better state tracking
+let lastVisibilityState = null;
+let visibilityDebounceTimeout = null;
+const VISIBILITY_EVENT_DEBOUNCE = 200; // 200ms debounce
+
+// Handler for visibility change events with improved detection
 function handleVisibilityChange() {
   chrome.storage.local.get(["recording"], (result) => {
     if (result.recording) {
-      const eventData = {
-        type: 'page_visibility_change',
-        timestamp: new Date().toISOString(),
-        url: window.location.href,
-        tabName: document.title,
-        visible: !document.hidden,
-        visibilityState: document.visibilityState
-      };
-      chrome.runtime.sendMessage({ action: "recordEvent", eventData: eventData });
+      // Debounce visibility changes to avoid rapid fire events
+      if (visibilityDebounceTimeout) {
+        clearTimeout(visibilityDebounceTimeout);
+      }
+      
+      visibilityDebounceTimeout = setTimeout(() => {
+        const currentVisibility = !document.hidden;
+        const currentState = document.visibilityState;
+        
+        // Only send if visibility state actually changed
+        if (lastVisibilityState !== currentState) {
+          const eventData = {
+            type: 'page_visibility_change',
+            timestamp: new Date().toISOString(),
+            url: window.location.href,
+            tabName: document.title,
+            visible: currentVisibility,
+            visibilityState: currentState,
+            documentHasFocus: document.hasFocus(),
+            previousState: lastVisibilityState
+          };
+          
+          chrome.runtime.sendMessage({ action: "recordEvent", eventData: eventData });
+          lastVisibilityState = currentState;
+        }
+        visibilityDebounceTimeout = null;
+      }, VISIBILITY_EVENT_DEBOUNCE);
     }
   });
 }
 
-// Handler for window focus events
+// Enhanced window focus tracking with better reliability
+let focusDebounceTimeout = null;
+let blurDebounceTimeout = null;
+let lastFocusState = null;
+const FOCUS_EVENT_DEBOUNCE = 500; // 500ms debounce for focus events
+
+// Handler for window focus events with improved detection
 function handleWindowFocus() {
   chrome.storage.local.get(["recording"], (result) => {
     if (result.recording) {
-      const eventData = {
-        type: 'window_focus',
-        timestamp: new Date().toISOString(),
-        url: window.location.href,
-        tabName: document.title,
-        focused: true
-      };
-      chrome.runtime.sendMessage({ action: "recordEvent", eventData: eventData });
+      // Clear any pending blur event
+      if (blurDebounceTimeout) {
+        clearTimeout(blurDebounceTimeout);
+        blurDebounceTimeout = null;
+      }
+      
+      // Debounce rapid focus events
+      if (focusDebounceTimeout) {
+        clearTimeout(focusDebounceTimeout);
+      }
+      
+      focusDebounceTimeout = setTimeout(() => {
+        // Double-check focus state to avoid false positives
+        if (document.hasFocus()) {
+          const eventData = {
+            type: 'window_focus',
+            timestamp: new Date().toISOString(),
+            url: window.location.href,
+            tabName: document.title,
+            focused: true,
+            documentHasFocus: document.hasFocus(),
+            visibilityState: document.visibilityState
+          };
+          
+          // Only send if state actually changed
+          if (lastFocusState !== 'focused') {
+            chrome.runtime.sendMessage({ action: "recordEvent", eventData: eventData });
+            lastFocusState = 'focused';
+          }
+        }
+        focusDebounceTimeout = null;
+      }, FOCUS_EVENT_DEBOUNCE);
     }
   });
 }
 
-// Handler for window blur events
+// Handler for window blur events with improved detection
 function handleWindowBlur() {
   chrome.storage.local.get(["recording"], (result) => {
     if (result.recording) {
-      const eventData = {
-        type: 'window_blur',
-        timestamp: new Date().toISOString(),
-        url: window.location.href,
-        tabName: document.title,
-        focused: false
-      };
-      chrome.runtime.sendMessage({ action: "recordEvent", eventData: eventData });
+      // Clear any pending focus event
+      if (focusDebounceTimeout) {
+        clearTimeout(focusDebounceTimeout);
+        focusDebounceTimeout = null;
+      }
+      
+      // Debounce blur events to avoid false positives during tab switches
+      if (blurDebounceTimeout) {
+        clearTimeout(blurDebounceTimeout);
+      }
+      
+      blurDebounceTimeout = setTimeout(() => {
+        // Double-check focus state
+        if (!document.hasFocus()) {
+          const eventData = {
+            type: 'window_blur',
+            timestamp: new Date().toISOString(),
+            url: window.location.href,
+            tabName: document.title,
+            focused: false,
+            documentHasFocus: document.hasFocus(),
+            visibilityState: document.visibilityState
+          };
+          
+          // Only send if state actually changed
+          if (lastFocusState !== 'blurred') {
+            chrome.runtime.sendMessage({ action: "recordEvent", eventData: eventData });
+            lastFocusState = 'blurred';
+          }
+        }
+        blurDebounceTimeout = null;
+      }, FOCUS_EVENT_DEBOUNCE);
     }
   });
 }
@@ -325,46 +450,94 @@ function startRecording() {
   });
 }
 
-// Function to capture initial state when recording starts
+// Enhanced function to capture initial state when recording starts
 function captureInitialState() {
   const timestamp = new Date().toISOString();
   
-  // Capture initial window focus state
+  // Set initial states for tracking variables
+  lastFocusState = document.hasFocus() ? 'focused' : 'blurred';
+  lastVisibilityState = document.visibilityState;
+  lastMouseEvent = { type: 'enter', timestamp: Date.now() };
+  
+  console.log('Capturing initial state:', {
+    focused: document.hasFocus(),
+    visible: !document.hidden,
+    visibilityState: document.visibilityState
+  });
+  
+  // Capture initial window focus state with enhanced data
   const windowFocusEvent = {
-    type: 'window_focus',
+    type: document.hasFocus() ? 'window_focus' : 'window_blur',
     timestamp: timestamp,
     url: window.location.href,
     tabName: document.title,
-    focused: document.hasFocus()
+    focused: document.hasFocus(),
+    documentHasFocus: document.hasFocus(),
+    visibilityState: document.visibilityState,
+    isInitialState: true
   };
   chrome.runtime.sendMessage({ action: "recordEvent", eventData: windowFocusEvent });
 
-  // Capture initial page visibility state
+  // Capture initial page visibility state with enhanced data
   const visibilityEvent = {
     type: 'page_visibility_change',
     timestamp: timestamp,
     url: window.location.href,
     tabName: document.title,
     visible: !document.hidden,
-    visibilityState: document.visibilityState
+    visibilityState: document.visibilityState,
+    documentHasFocus: document.hasFocus(),
+    previousState: null,
+    isInitialState: true
   };
   chrome.runtime.sendMessage({ action: "recordEvent", eventData: visibilityEvent });
 
-  // Capture initial mouse presence (assume present when recording starts)
+  // Capture initial mouse presence with enhanced data
   const mouseEvent = {
     type: 'mouse_enter_chrome',
     timestamp: timestamp,
     url: window.location.href,
     tabName: document.title,
-    mousePresent: true
+    mousePresent: true,
+    fromElement: 'initial',
+    isInitialState: true
   };
   chrome.runtime.sendMessage({ action: "recordEvent", eventData: mouseEvent });
+  
+  console.log('Initial state captured successfully');
 }
 
 // Remove listeners when recording stops.
 function stopRecording() {
   console.log("Stopping recording...");
   recording = false;
+  
+  // Clear all pending timeouts to prevent ghost events
+  if (mouseEnterTimeout) {
+    clearTimeout(mouseEnterTimeout);
+    mouseEnterTimeout = null;
+  }
+  if (mouseLeaveTimeout) {
+    clearTimeout(mouseLeaveTimeout);
+    mouseLeaveTimeout = null;
+  }
+  if (focusDebounceTimeout) {
+    clearTimeout(focusDebounceTimeout);
+    focusDebounceTimeout = null;
+  }
+  if (blurDebounceTimeout) {
+    clearTimeout(blurDebounceTimeout);
+    blurDebounceTimeout = null;
+  }
+  if (visibilityDebounceTimeout) {
+    clearTimeout(visibilityDebounceTimeout);
+    visibilityDebounceTimeout = null;
+  }
+  
+  // Reset state tracking variables
+  lastMouseEvent = null;
+  lastFocusState = null;
+  lastVisibilityState = null;
   
   // Remove floating button first
   try {

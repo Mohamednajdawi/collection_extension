@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Focus Tracking Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .status-panel {
+            background: #e8f4f8;
+            border: 2px solid #2196F3;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            margin: 10px 0;
+            padding: 8px;
+            background: white;
+            border-radius: 4px;
+        }
+        .status-value {
+            font-weight: bold;
+            color: #2196F3;
+        }
+        .test-section {
+            margin: 30px 0;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        .test-section h3 {
+            margin-top: 0;
+            color: #333;
+        }
+        button {
+            background: #2196F3;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin: 5px;
+            font-size: 14px;
+        }
+        button:hover {
+            background: #1976D2;
+        }
+        .log-area {
+            background: #f8f8f8;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 15px;
+            height: 200px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+        }
+        .alert {
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 4px;
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            color: #856404;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎯 Enhanced Focus Tracking Test</h1>
+        <p>This page helps you test the improved time tracking functionality of your browser extension.</p>
+        
+        <div class="alert">
+            <strong>Instructions:</strong> Start recording in your extension, then perform the test scenarios below. 
+            The improved tracking should now show more accurate time inside/outside Chrome.
+        </div>
+
+        <div class="status-panel">
+            <h3>📊 Real-time Status</h3>
+            <div class="status-item">
+                <span>Document Focus:</span>
+                <span class="status-value" id="documentFocus">-</span>
+            </div>
+            <div class="status-item">
+                <span>Page Visibility:</span>
+                <span class="status-value" id="pageVisibility">-</span>
+            </div>
+            <div class="status-item">
+                <span>Visibility State:</span>
+                <span class="status-value" id="visibilityState">-</span>
+            </div>
+            <div class="status-item">
+                <span>Mouse Position:</span>
+                <span class="status-value" id="mousePosition">-</span>
+            </div>
+            <div class="status-item">
+                <span>Time on Page:</span>
+                <span class="status-value" id="timeOnPage">0s</span>
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h3>🧪 Test Scenarios</h3>
+            <p>Try these scenarios to test the improved tracking:</p>
+            
+            <button onclick="simulateTyping()">✏️ Simulate Typing</button>
+            <button onclick="simulateClicking()">🖱️ Simulate Clicking</button>
+            <button onclick="openNewTab()">📑 Open New Tab</button>
+            <button onclick="triggerFocusTest()">🎯 Focus Test</button>
+            
+            <div style="margin-top: 20px;">
+                <h4>Expected Behaviors with New Implementation:</h4>
+                <ul>
+                    <li><strong>Mouse Movement:</strong> Brief movements to browser UI shouldn't trigger "outside" time</li>
+                    <li><strong>Tab Switching:</strong> Quick tab switches should be debounced</li>
+                    <li><strong>Focus Changes:</strong> Temporary focus loss should not count as extended "outside" time</li>
+                    <li><strong>Minimum Duration:</strong> Only periods > 5 seconds count as truly "outside Chrome"</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h3>📝 Event Log</h3>
+            <p>Monitor events in real-time (events that would be sent to your extension):</p>
+            <button onclick="clearLog()">Clear Log</button>
+            <button onclick="toggleLogging()" id="toggleBtn">Start Logging</button>
+            <div class="log-area" id="eventLog"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>⚡ Performance Improvements</h3>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                <div>
+                    <h4>Before (Issues):</h4>
+                    <ul>
+                        <li>False "outside" time from UI interactions</li>
+                        <li>No debouncing of rapid events</li>
+                        <li>Overly restrictive focus logic</li>
+                        <li>Poor handling of brief interruptions</li>
+                    </ul>
+                </div>
+                <div>
+                    <h4>After (Fixes):</h4>
+                    <ul>
+                        <li>✅ Debounced mouse events (1s)</li>
+                        <li>✅ Debounced focus events (500ms)</li>
+                        <li>✅ Minimum outside duration (5s)</li>
+                        <li>✅ Smart activity detection</li>
+                        <li>✅ Better initial state capture</li>
+                        <li>✅ Auto-correction for discrepancies</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let startTime = Date.now();
+        let logging = false;
+        let logCount = 0;
+
+        // Update status display
+        function updateStatus() {
+            document.getElementById('documentFocus').textContent = document.hasFocus() ? '✅ Focused' : '❌ Not Focused';
+            document.getElementById('pageVisibility').textContent = document.hidden ? '👁️ Hidden' : '👁️ Visible';
+            document.getElementById('visibilityState').textContent = document.visibilityState;
+            
+            const elapsed = Math.floor((Date.now() - startTime) / 1000);
+            document.getElementById('timeOnPage').textContent = elapsed + 's';
+        }
+
+        // Track mouse position
+        document.addEventListener('mousemove', (e) => {
+            document.getElementById('mousePosition').textContent = `${e.clientX}, ${e.clientY}`;
+        });
+
+        // Simulate extension event logging
+        function logEvent(type, data) {
+            if (!logging) return;
+            
+            logCount++;
+            const timestamp = new Date().toISOString();
+            const logEntry = `[${logCount}] ${timestamp.split('T')[1].split('.')[0]} - ${type}\n${JSON.stringify(data, null, 2)}\n\n`;
+            
+            const logArea = document.getElementById('eventLog');
+            logArea.textContent += logEntry;
+            logArea.scrollTop = logArea.scrollHeight;
+        }
+
+        // Test functions
+        function simulateTyping() {
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.placeholder = 'Type here to test input tracking...';
+            input.style.cssText = 'width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 4px;';
+            
+            const existingInput = document.querySelector('input[placeholder*="Type here"]');
+            if (existingInput) {
+                existingInput.focus();
+            } else {
+                document.querySelector('.test-section').appendChild(input);
+                input.focus();
+            }
+            
+            logEvent('input_focus', { action: 'focus', element: 'test-input' });
+        }
+
+        function simulateClicking() {
+            logEvent('click', { 
+                x: Math.floor(Math.random() * 800), 
+                y: Math.floor(Math.random() * 600),
+                target: 'test-button'
+            });
+            alert('Click simulated! Check the log for event details.');
+        }
+
+        function openNewTab() {
+            logEvent('tab_change', { action: 'new_tab_opened' });
+            window.open('about:blank', '_blank');
+        }
+
+        function triggerFocusTest() {
+            logEvent('focus_test', { action: 'focus_test_started' });
+            
+            // Simulate rapid focus changes
+            window.blur();
+            setTimeout(() => window.focus(), 100);
+            setTimeout(() => window.blur(), 200);
+            setTimeout(() => window.focus(), 300);
+            
+            alert('Focus test completed! Check how the debouncing handles rapid focus changes.');
+        }
+
+        function clearLog() {
+            document.getElementById('eventLog').textContent = '';
+            logCount = 0;
+        }
+
+        function toggleLogging() {
+            logging = !logging;
+            const btn = document.getElementById('toggleBtn');
+            btn.textContent = logging ? 'Stop Logging' : 'Start Logging';
+            btn.style.background = logging ? '#f44336' : '#2196F3';
+            
+            if (logging) {
+                logEvent('system', { action: 'logging_started' });
+            }
+        }
+
+        // Event listeners for testing
+        document.addEventListener('focus', () => logEvent('window_focus', { focused: true }));
+        document.addEventListener('blur', () => logEvent('window_blur', { focused: false }));
+        document.addEventListener('visibilitychange', () => 
+            logEvent('visibility_change', { 
+                visible: !document.hidden, 
+                state: document.visibilityState 
+            })
+        );
+
+        // Update status every second
+        setInterval(updateStatus, 1000);
+        updateStatus();
+
+        // Welcome message
+        console.log('🎯 Focus Tracking Test Page Loaded');
+        console.log('The improved extension should now provide more accurate time tracking!');
+    </script>
+</body>
+</html> 

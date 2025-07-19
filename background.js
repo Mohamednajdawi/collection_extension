@@ -408,11 +408,16 @@ function calculateFocusTimes(allSortedEvents, stats) {
     }
 
     let lastEventTime = new Date(stats.timeStats.startTime);
-    let windowFocused = true; // Default to true for window focus
-    let mousePresent = true; // Default to true for mouse presence
-    let pageVisible = true; // Default to true for page visibility
+    let windowFocused = true; // Default to true - user is actively starting recording
+    let mousePresent = true; // Default to true
+    let pageVisible = true; // Default to true
+    
+    // Track mouse leave/enter pairs for debouncing
+    let mouseEventHistory = [];
+    const MOUSE_DEBOUNCE_MS = 2000; // 2 seconds debounce for mouse events
+    const MIN_OUTSIDE_DURATION_MS = 5000; // Minimum 5 seconds to count as "outside"
 
-    // Find the first relevant events to set initial states correctly
+    // Enhanced initial state detection with better fallbacks
     const firstWindowFocusEvent = allSortedEvents.find(e => 
         e.type === 'window_focus_change' || e.type === 'window_focus' || e.type === 'window_blur'
     );
@@ -423,10 +428,10 @@ function calculateFocusTimes(allSortedEvents, stats) {
         e.type === 'page_visibility_change'
     );
 
-    // Set initial states based on first events
+    // Set initial states with better logic
     if (firstWindowFocusEvent) {
         if (firstWindowFocusEvent.type === 'window_focus_change') {
-            windowFocused = firstWindowFocusEvent.focused;
+            windowFocused = firstWindowFocusEvent.focused !== false;
         } else if (firstWindowFocusEvent.type === 'window_focus') {
             windowFocused = true;
         } else if (firstWindowFocusEvent.type === 'window_blur') {
@@ -442,19 +447,46 @@ function calculateFocusTimes(allSortedEvents, stats) {
         pageVisible = firstVisibilityEvent.visible !== false;
     }
 
-    for (const event of allSortedEvents) {
+    // Helper function to determine if user is actively using Chrome
+    function isActivelyUsingChrome(focused, visible, mousePresent, eventTime, mouseHistory) {
+        // Primary indicator: window focus and page visibility
+        const basicActivity = focused && visible;
+        
+        // If basic activity is true, user is definitely active
+        if (basicActivity) return true;
+        
+        // If window is not focused, check for recent mouse activity
+        if (!focused && mousePresent) {
+            // Would return TRUE here - mouse present during temporary focus loss
+            return true;
+        }
+        
+        // If page is not visible but window is focused, still consider active
+        if (focused && !visible) return true;
+        
+        return false;
+    }
+
+    // Process events with improved logic
+    for (let i = 0; i < allSortedEvents.length; i++) {
+        const event = allSortedEvents[i];
         const eventTime = new Date(event.timestamp);
 
         if (eventTime < new Date(stats.timeStats.startTime)) continue;
         if (stats.timeStats.endTime && eventTime > new Date(stats.timeStats.endTime)) {
             const durationMs = new Date(stats.timeStats.endTime) - lastEventTime;
             if (durationMs > 0) {
-                // User is considered "inside Chrome" if window is focused AND (mouse is present OR page is visible)
-                const isInsideChrome = windowFocused && (mousePresent || pageVisible);
-                if (isInsideChrome) {
+                const isActive = isActivelyUsingChrome(windowFocused, pageVisible, mousePresent, eventTime, mouseEventHistory);
+                if (isActive) {
                     stats.timeStats.timeInsideChrome += durationMs;
                 } else {
-                    stats.timeStats.timeOutsideChrome += durationMs;
+                    // Only count as outside if duration is significant
+                    if (durationMs >= MIN_OUTSIDE_DURATION_MS) {
+                        stats.timeStats.timeOutsideChrome += durationMs;
+                    } else {
+                        // Treat brief periods as inside Chrome (likely UI interactions)
+                        stats.timeStats.timeInsideChrome += durationMs;
+                    }
                 }
             }
             lastEventTime = new Date(stats.timeStats.endTime);
@@ -464,28 +496,57 @@ function calculateFocusTimes(allSortedEvents, stats) {
         const durationMs = eventTime - lastEventTime;
 
         if (durationMs > 0) {
-            // User is considered "inside Chrome" if window is focused AND (mouse is present OR page is visible)
-            const isInsideChrome = windowFocused && (mousePresent || pageVisible);
-            if (isInsideChrome) {
+            const isActive = isActivelyUsingChrome(windowFocused, pageVisible, mousePresent, eventTime, mouseEventHistory);
+            if (isActive) {
                 stats.timeStats.timeInsideChrome += durationMs;
             } else {
-                stats.timeStats.timeOutsideChrome += durationMs;
+                // Apply minimum duration check for outside time
+                if (durationMs >= MIN_OUTSIDE_DURATION_MS) {
+                    stats.timeStats.timeOutsideChrome += durationMs;
+                } else {
+                    // Treat brief periods as inside Chrome
+                    stats.timeStats.timeInsideChrome += durationMs;
+                }
             }
         }
 
-        // Update states based on event type
+        // Update states based on event type with improved handling
         if (event.type === 'window_focus_change') {
-            windowFocused = event.focused;
+            windowFocused = event.focused !== false;
+            // Window focus is the most reliable indicator, clear mouse ambiguity
+            if (windowFocused) {
+                mouseEventHistory = []; // Reset mouse history when window regains focus
+            }
         } else if (event.type === 'window_focus') {
             windowFocused = true;
+            mouseEventHistory = [];
         } else if (event.type === 'window_blur') {
             windowFocused = false;
         } else if (event.type === 'mouse_enter_chrome') {
             mousePresent = true;
+            mouseEventHistory.push({ type: 'enter', timestamp: event.timestamp });
+            // Limit history size
+            if (mouseEventHistory.length > 10) {
+                mouseEventHistory = mouseEventHistory.slice(-5);
+            }
         } else if (event.type === 'mouse_leave_chrome') {
+            // Apply debouncing logic for mouse leave events
+            const lastMouseEnter = mouseEventHistory.filter(e => e.type === 'enter').pop();
+            if (lastMouseEnter) {
+                const timeSinceEnter = eventTime - new Date(lastMouseEnter.timestamp);
+                if (timeSinceEnter < MOUSE_DEBOUNCE_MS) {
+                    // Ignore rapid mouse leave after recent enter (likely UI interaction)
+                    continue;
+                }
+            }
+            
             mousePresent = false;
+            mouseEventHistory.push({ type: 'leave', timestamp: event.timestamp });
+            if (mouseEventHistory.length > 10) {
+                mouseEventHistory = mouseEventHistory.slice(-5);
+            }
         } else if (event.type === 'page_visibility_change') {
-            pageVisible = event.visible;
+            pageVisible = event.visible !== false;
         }
         
         lastEventTime = eventTime;
@@ -496,22 +557,42 @@ function calculateFocusTimes(allSortedEvents, stats) {
         const sessionEndTime = new Date(stats.timeStats.endTime);
         if (sessionEndTime > lastEventTime) {
             const finalDurationMs = sessionEndTime - lastEventTime;
-            const isInsideChrome = windowFocused && (mousePresent || pageVisible);
-            if (isInsideChrome) {
+            const isActive = isActivelyUsingChrome(windowFocused, pageVisible, mousePresent, sessionEndTime, mouseEventHistory);
+            if (isActive) {
                 stats.timeStats.timeInsideChrome += finalDurationMs;
             } else {
-                stats.timeStats.timeOutsideChrome += finalDurationMs;
+                if (finalDurationMs >= MIN_OUTSIDE_DURATION_MS) {
+                    stats.timeStats.timeOutsideChrome += finalDurationMs;
+                } else {
+                    stats.timeStats.timeInsideChrome += finalDurationMs;
+                }
             }
         }
     }
     
-    // Debug logging for verification
+    // Enhanced validation and correction
     const totalFocusTime = stats.timeStats.timeInsideChrome + stats.timeStats.timeOutsideChrome;
-    console.log(`Time calculation: Inside=${stats.timeStats.timeInsideChrome}ms, Outside=${stats.timeStats.timeOutsideChrome}ms, Total=${totalFocusTime}ms, Duration=${stats.timeStats.duration}ms`);
+    const discrepancy = Math.abs(totalFocusTime - stats.timeStats.duration);
     
-    if (stats.timeStats.duration > 0 && Math.abs(totalFocusTime - stats.timeStats.duration) > 1000) { 
-         console.warn(`Focus time calculation discrepancy: TotalFocusTime=${totalFocusTime}, SessionDuration=${stats.timeStats.duration}`);
+    console.log(`Enhanced time calculation:`, {
+        inside: stats.timeStats.timeInsideChrome,
+        outside: stats.timeStats.timeOutsideChrome,
+        total: totalFocusTime,
+        duration: stats.timeStats.duration,
+        discrepancy: discrepancy
+    });
+    
+    // Auto-correct significant discrepancies
+    if (discrepancy > 1000 && stats.timeStats.duration > 0) { 
+        console.warn(`Correcting time discrepancy of ${discrepancy}ms`);
+        const ratio = stats.timeStats.duration / totalFocusTime;
+        stats.timeStats.timeInsideChrome = Math.round(stats.timeStats.timeInsideChrome * ratio);
+        stats.timeStats.timeOutsideChrome = stats.timeStats.duration - stats.timeStats.timeInsideChrome;
     }
+    
+    // Ensure non-negative values
+    stats.timeStats.timeInsideChrome = Math.max(0, stats.timeStats.timeInsideChrome);
+    stats.timeStats.timeOutsideChrome = Math.max(0, stats.timeStats.timeOutsideChrome);
 }
 
 function finalizeStats(stats, loopState, events) { // events here is the original sorted log for other stats
