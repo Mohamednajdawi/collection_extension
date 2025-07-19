@@ -1,15 +1,13 @@
 {
     "manifest_version": 3,
-    "name": "Session Recorder",
-    "version": "1.0",
-    "description": "Records keyboard and mouse events in the current session when started.",
+    "name": "Session Activity Recorder",
+    "version": "1.0.0",
+    "description": "Records user activity including clicks, typing, and navigation during browser sessions for productivity analysis.",
     "permissions": [
         "activeTab",
         "scripting",
-        "storage"
-    ],
-    "host_permissions": [
-        "https://api.openai.com/*"
+        "storage",
+        "tabs"
     ],
     "action": {
         "default_popup": "popup.html",
@@ -21,22 +19,19 @@
     "content_scripts": [
         {
             "matches": [
-                "<all_urls>"
+                "http://*/*",
+                "https://*/*"
             ],
             "js": [
                 "content.js"
             ],
-            "run_at": "document_idle"
+            "run_at": "document_idle",
+            "all_frames": false
         }
     ],
-    "web_accessible_resources": [
-        {
-            "resources": [
-                "config.js"
-            ],
-            "matches": [
-                "<all_urls>"
-            ]
-        }
-    ]
+    "icons": {
+        "16": "icon.png",
+        "48": "icon.png",
+        "128": "icon.png"
+    }
 }
