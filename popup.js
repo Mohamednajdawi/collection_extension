@@ -288,53 +288,61 @@ function createPromptFromAnalysis(analysis) {
     const timeInside = Math.round(analysis.timeStats.timeInsideChrome / 1000 / 60);
     const timeOutside = Math.round(analysis.timeStats.timeOutsideChrome / 1000 / 60);
     
-    return `Please analyze this user session data and provide insights:
+    return `Analyze this exam session data to detect potential academic dishonesty and cheating behavior:
 
-the main goal is to provide insights on how to improve the user's productivity and focus
-summary should include the time spent inside and outside chrome, the most clicked elements, the most used keys, and the most visited pages
-the summary should be in a concise and actionable format, with clear recommendations for improvement
-the summary should be in a friendly and engaging tone, with a touch of humor and personality
-the summary should be in a concise and actionable format, with clear recommendations for improvement
+You are an AI exam proctor analyzing student behavior during an online examination. Your primary goal is to identify suspicious activities that may indicate cheating, unauthorized resource access, or exam violations.
 
-SESSION OVERVIEW:
-- Duration: ${duration} minutes
-- Time focused on browser: ${timeInside} minutes
-- Time away from browser: ${timeOutside} minutes
-- Total events captured: ${analysis.totalEvents}
+EXAM SESSION DATA:
+- Total exam duration: ${duration} minutes
+- Time focused on exam browser: ${timeInside} minutes
+- Time away from exam browser: ${timeOutside} minutes (CRITICAL METRIC)
+- Total monitored events: ${analysis.totalEvents}
 
-ACTIVITY BREAKDOWN:
+BEHAVIOR ANALYSIS:
 - Mouse clicks: ${analysis.mouseStats.totalClicks}
 - Keyboard inputs: ${analysis.keyboardStats.totalKeystrokes}
-- Pages visited: ${analysis.pageStats.uniqueUrls.length}
-- Mouse movement distance: ${Math.round(analysis.mouseStats.totalMovement)} pixels
-- clickDetails: ${JSON.stringify(analysis.clickDetails)}
-- timeStats: ${JSON.stringify(analysis.timeStats)}
-- pageStats: ${JSON.stringify(analysis.pageStats)}
-- keyboardStats: ${JSON.stringify(analysis.keyboardStats)}
-- mouseStats: ${JSON.stringify(analysis.mouseStats)}
-- textStats: ${JSON.stringify(analysis.textStats)}
-- clicksByElement: ${JSON.stringify(analysis.clicksByElement)}
-- mostUsedKeys: ${JSON.stringify(analysis.keyboardStats.mostUsedKeys)}
+- Websites/tabs visited: ${analysis.pageStats.uniqueUrls.length}
+- Mouse movement patterns: ${Math.round(analysis.mouseStats.totalMovement)} pixels
+- Window/tab switching frequency: ${JSON.stringify(analysis.clickDetails)}
+- Time distribution: ${JSON.stringify(analysis.timeStats)}
+- Page navigation patterns: ${JSON.stringify(analysis.pageStats)}
+- Keystroke patterns: ${JSON.stringify(analysis.keyboardStats)}
+- Mouse interaction data: ${JSON.stringify(analysis.mouseStats)}
+- Text input analysis: ${JSON.stringify(analysis.textStats)}
+- UI element interactions: ${JSON.stringify(analysis.clicksByElement)}
+- Key usage frequency: ${JSON.stringify(analysis.keyboardStats.mostUsedKeys)}
 
-TYPING ACTIVITY:
-- Words typed: ${analysis.textStats.totalWordsTyped}
+TYPING BEHAVIOR:
+- Words typed during exam: ${analysis.textStats.totalWordsTyped}
 - Characters typed: ${analysis.textStats.totalCharactersTyped}
-- Average typing speed: ${analysis.textStats.typingSpeed.averageWPM} WPM
-- Total deletions: ${analysis.textStats.deletions}
+- Typing speed: ${analysis.textStats.typingSpeed.averageWPM} WPM
+- Text deletions/corrections: ${analysis.textStats.deletions}
 
-MOST CLICKED ELEMENTS:
-${Object.entries(analysis.clicksByElement).slice(0, 5).map(([element, count]) => `- ${element}: ${count} clicks`).join('\n')}
+SUSPICIOUS ACTIVITY INDICATORS:
+Most clicked elements: ${Object.entries(analysis.clicksByElement).slice(0, 5).map(([element, count]) => `- ${element}: ${count} clicks`).join('\n')}
 
-MOST USED KEYS:
-${Object.entries(analysis.keyboardStats.mostUsedKeys).slice(0, 10).map(([key, count]) => `- "${key}": ${count} times`).join('\n')}
+Most used keys: ${Object.entries(analysis.keyboardStats.mostUsedKeys).slice(0, 10).map(([key, count]) => `- "${key}": ${count} times`).join('\n')}
 
-Please provide:
-1. A brief summary of the session
-2. Productivity insights and patterns
-3. List of websites and list of typed sentences
+REQUIRED ANALYSIS:
+1. **CHEATING RISK ASSESSMENT**: Provide a risk score (LOW/MEDIUM/HIGH) based on:
+   - Time spent outside exam browser (high risk if >10% of total time)
+   - Unauthorized website access
+   - Suspicious copy-paste patterns (Ctrl+C, Ctrl+V frequency)
+   - Tab switching behavior
+   - Unusual typing patterns
 
+2. **VIOLATION DETECTION**: Flag potential violations:
+   - External resource access (non-exam websites)
+   - Communication attempts (social media, messaging)
+   - Search engine usage
+   - File access patterns
+   - Screen sharing or recording software usage
 
-Keep the response concise but insightful, focusing on actionable recommendations.`;
+3. **DETAILED FINDINGS**: List all websites visited and typed content for manual review
+
+4. **RECOMMENDATION**: Should this exam session be flagged for academic integrity review?
+
+Provide a clear, objective assessment focusing on academic integrity violations and suspicious behavior patterns.`;
 }
 
 // Function to display AI summary in a modal
