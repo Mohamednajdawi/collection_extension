@@ -1,9 +1,16 @@
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    // Although we don't do anything specific here, this listener
-    // is necessary to prevent the "Receiving end does not exist" error.
-    // The popup is sending messages, and *something* needs to be listening,
-    // even if it doesn't process the messages.
-    console.log("Message received in background:", message);
+// Initialize background script with proper error handling
+(() => {
+    if (typeof chrome === 'undefined' || !chrome.runtime) {
+        console.error('Chrome runtime not available');
+        return;
+    }
+
+    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+        // Although we don't do anything specific here, this listener
+        // is necessary to prevent the "Receiving end does not exist" error.
+        // The popup is sending messages, and *something* needs to be listening,
+        // even if it doesn't process the messages.
+        console.log("Message received in background:", message);
 
     // You could add logic here to handle messages if needed, but for this
     // example, the content script handles everything.
@@ -37,26 +44,34 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
 });
 
-// Listener for window focus changes
-chrome.windows.onFocusChanged.addListener((windowId) => {
-    chrome.storage.local.get(["recording", "eventsLog"], (result) => {
-        // Only record focus changes if a recording session is active
-        if (result.recording) {
-            const isFocused = windowId !== chrome.windows.WINDOW_ID_NONE && windowId !== undefined;
-            const focusEventData = {
-                type: 'window_focus_change',
-                timestamp: new Date().toISOString(),
-                focused: isFocused,
-                windowId: windowId // Store windowId for debugging or future use
-            };
-            
-            let updatedEventsLog = result.eventsLog || [];
-            updatedEventsLog.push(focusEventData);
-            chrome.storage.local.set({ eventsLog: updatedEventsLog });
-            console.log('Window focus change event recorded:', focusEventData);
-        }
-    });
-});
+    // Listener for window focus changes
+    if (chrome.windows && chrome.windows.onFocusChanged) {
+        chrome.windows.onFocusChanged.addListener((windowId) => {
+            try {
+                chrome.storage.local.get(["recording", "eventsLog"], (result) => {
+                    // Only record focus changes if a recording session is active
+                    if (result.recording) {
+                        const isFocused = windowId !== chrome.windows.WINDOW_ID_NONE && windowId !== undefined;
+                        const focusEventData = {
+                            type: 'window_focus_change',
+                            timestamp: new Date().toISOString(),
+                            focused: isFocused,
+                            windowId: windowId // Store windowId for debugging or future use
+                        };
+                        
+                        let updatedEventsLog = result.eventsLog || [];
+                        updatedEventsLog.push(focusEventData);
+                        chrome.storage.local.set({ eventsLog: updatedEventsLog });
+                        console.log('Window focus change event recorded:', focusEventData);
+                    }
+                });
+            } catch (error) {
+                console.error('Error in window focus listener:', error);
+            }
+        });
+    } else {
+        console.warn('chrome.windows API not available');
+    }
 
 // Helper to initialize the main stats object
 function initializeStats(events) {
@@ -449,6 +464,12 @@ function calculateFocusTimes(allSortedEvents, stats) {
 
     // Helper function to determine if user is actively using Chrome
     function isActivelyUsingChrome(focused, visible, mousePresent, eventTime, mouseHistory) {
+        // CRITICAL: If mouse has explicitly left Chrome, user is NOT actively using it
+        // This overrides other indicators because mouse_leave_chrome is an explicit user action
+        if (!mousePresent) {
+            return false;
+        }
+        
         // Primary indicator: window focus and page visibility
         const basicActivity = focused && visible;
         
@@ -457,7 +478,7 @@ function calculateFocusTimes(allSortedEvents, stats) {
         
         // If window is not focused, check for recent mouse activity
         if (!focused && mousePresent) {
-            // Would return TRUE here - mouse present during temporary focus loss-
+            // Mouse present during temporary focus loss
             return true;
         }
         
@@ -500,8 +521,11 @@ function calculateFocusTimes(allSortedEvents, stats) {
             if (isActive) {
                 stats.timeStats.timeInsideChrome += durationMs;
             } else {
-                // Apply minimum duration check for outside time
-                if (durationMs >= MIN_OUTSIDE_DURATION_MS) {
+                // Apply minimum duration check for outside time, but always count final periods
+                const isSessionEnd = (i === allSortedEvents.length - 1) || 
+                                    (stats.timeStats.endTime && eventTime >= new Date(stats.timeStats.endTime));
+                
+                if (durationMs >= MIN_OUTSIDE_DURATION_MS || isSessionEnd) {
                     stats.timeStats.timeOutsideChrome += durationMs;
                 } else {
                     // Treat brief periods as inside Chrome
@@ -535,8 +559,13 @@ function calculateFocusTimes(allSortedEvents, stats) {
             if (lastMouseEnter) {
                 const timeSinceEnter = eventTime - new Date(lastMouseEnter.timestamp);
                 if (timeSinceEnter < MOUSE_DEBOUNCE_MS) {
-                    // Ignore rapid mouse leave after recent enter (likely UI interaction)
-                    continue;
+                    // Exception: Always count mouse leave if it's near session end
+                    const timeToSessionEnd = stats.timeStats.endTime ? 
+                        new Date(stats.timeStats.endTime) - eventTime : Infinity;
+                    if (timeToSessionEnd > 10000) { // More than 10 seconds to session end
+                        // Ignore rapid mouse leave after recent enter (likely UI interaction)
+                        continue;
+                    }
                 }
             }
             
@@ -545,6 +574,13 @@ function calculateFocusTimes(allSortedEvents, stats) {
             if (mouseEventHistory.length > 10) {
                 mouseEventHistory = mouseEventHistory.slice(-5);
             }
+            
+            // Log mouse leave events for debugging
+            console.log('Mouse leave detected:', {
+                timestamp: event.timestamp,
+                timeToSessionEnd: stats.timeStats.endTime ? 
+                    new Date(stats.timeStats.endTime) - eventTime : 'unknown'
+            });
         } else if (event.type === 'page_visibility_change') {
             pageVisible = event.visible !== false;
         }
@@ -558,14 +594,21 @@ function calculateFocusTimes(allSortedEvents, stats) {
         if (sessionEndTime > lastEventTime) {
             const finalDurationMs = sessionEndTime - lastEventTime;
             const isActive = isActivelyUsingChrome(windowFocused, pageVisible, mousePresent, sessionEndTime, mouseEventHistory);
+            
+            console.log(`Final period calculation:`, {
+                duration: finalDurationMs,
+                lastEventTime: lastEventTime.toISOString(),
+                sessionEndTime: sessionEndTime.toISOString(),
+                states: { windowFocused, pageVisible, mousePresent },
+                isActive: isActive,
+                decision: isActive ? 'INSIDE Chrome' : 'OUTSIDE Chrome'
+            });
+            
             if (isActive) {
                 stats.timeStats.timeInsideChrome += finalDurationMs;
             } else {
-                if (finalDurationMs >= MIN_OUTSIDE_DURATION_MS) {
-                    stats.timeStats.timeOutsideChrome += finalDurationMs;
-                } else {
-                    stats.timeStats.timeInsideChrome += finalDurationMs;
-                }
+                // Always count final outside periods regardless of duration
+                stats.timeStats.timeOutsideChrome += finalDurationMs;
             }
         }
     }
@@ -579,7 +622,14 @@ function calculateFocusTimes(allSortedEvents, stats) {
         outside: stats.timeStats.timeOutsideChrome,
         total: totalFocusTime,
         duration: stats.timeStats.duration,
-        discrepancy: discrepancy
+        discrepancy: discrepancy,
+        finalStates: {
+            windowFocused,
+            pageVisible,
+            mousePresent,
+            lastEventTime: lastEventTime.toISOString(),
+            sessionEndTime: stats.timeStats.endTime
+        }
     });
     
     // Auto-correct significant discrepancies
@@ -729,3 +779,5 @@ async function processEventLog(allEventsFromStorage) {
         return initializeStats([]);
     }
 }
+
+})(); // Close the initialization function
