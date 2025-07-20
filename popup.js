@@ -84,8 +84,13 @@ document.getElementById("startBtn").addEventListener("click", () => {
             hasRecordedData = false;
             chrome.storage.local.set({ isRecording: true, hasRecordedData: false });
             updateButtonStates();
-            updateStatus("Recording in progress...", 'success');
+            updateStatus("Recording started...", 'success');
             document.getElementById("stopBtn").setAttribute("data-recording", "true");
+            
+            // Close the popup after successful start
+            setTimeout(() => {
+                window.close();
+            }, 100); // Small delay to show the success message briefly
         } else {
             console.error("Failed to start recording:", response);
             updateStatus("Error starting recording", 'error');
