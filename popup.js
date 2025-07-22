@@ -287,6 +287,15 @@ function createPromptFromAnalysis(analysis) {
     const duration = Math.round(analysis.timeStats.duration / 1000 / 60); // Convert to minutes
     const timeInside = Math.round(analysis.timeStats.timeInsideChrome / 1000 / 60);
     const timeOutside = Math.round(analysis.timeStats.timeOutsideChrome / 1000 / 60);
+
+    // Summarize copy events
+    let copyEventCount = 0;
+    let copySamples = [];
+    if (analysis.textStats && analysis.textStats.copyHistory) {
+        const allCopies = Object.values(analysis.textStats.copyHistory).flat();
+        copyEventCount = allCopies.length;
+        copySamples = allCopies.slice(0, 5).map(ev => `- [${ev.timestamp}] ${ev.value}`);
+    }
     
     return `Analyze this exam session data to detect potential academic dishonesty and cheating behavior:
 
@@ -297,6 +306,8 @@ EXAM SESSION DATA:
 - Time focused on exam browser: ${timeInside} minutes
 - Time away from exam browser: ${timeOutside} minutes (CRITICAL METRIC)
 - Total monitored events: ${analysis.totalEvents}
+- Number of copy actions: ${copyEventCount}
+${copySamples.length > 0 ? `- Sample copied texts:\n${copySamples.join('\n')}` : ''}
 
 BEHAVIOR ANALYSIS:
 - Mouse clicks: ${analysis.mouseStats.totalClicks}

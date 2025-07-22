@@ -136,7 +136,8 @@ function initializeStats(events) {
             },
             finalValues: {},
             fieldMetadata: {},
-            inputSummary: []
+            inputSummary: [],
+            copyHistory: {} // New: Store history of copied text
         },
         typingDetails: []
     };
@@ -266,6 +267,21 @@ function handlePasteEvent(event, textStats) {
     }
 }
 
+function handleCopyEvent(event, textStats) {
+    const fieldId = event.fieldIdentifier || event.targetInfo;
+    if (fieldId && event.copiedText) {
+        // Optionally, you can store the last copied text per field
+        if (!textStats.copyHistory) textStats.copyHistory = {};
+        if (!textStats.copyHistory[fieldId]) textStats.copyHistory[fieldId] = [];
+        textStats.copyHistory[fieldId].push({
+            timestamp: event.timestamp,
+            value: event.copiedText,
+            url: event.url,
+            fieldInfo: event.targetInfo
+        });
+    }
+}
+
 
 function handleGeneralEventTiming(event, timeStats, loopState) {
     if (loopState.lastTimestamp) {
@@ -310,6 +326,8 @@ function processSingleEvent(event, stats, loopState) {
         handleMouseMoveEvent(event, stats.mouseStats);
     } else if (event.type === 'paste' && event.pastedText) {
         handlePasteEvent(event, stats.textStats);
+    } else if (event.type === 'copy' && event.copiedText) {
+        handleCopyEvent(event, stats.textStats);
     }
 
     if (event.type === 'input' && event.targetInfo) {

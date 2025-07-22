@@ -613,6 +613,39 @@ function attachListeners(resuming) {
     });
   });
 
+  // Add copy event listener
+  document.addEventListener('copy', function(e) {
+    chrome.storage.local.get(["recording"], (result) => {
+      if (result.recording) {
+        let copiedText = '';
+        // If copying from an input or textarea, get the selected value
+        if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) {
+          const input = e.target;
+          if (typeof input.selectionStart === 'number' && typeof input.selectionEnd === 'number') {
+            copiedText = input.value.substring(input.selectionStart, input.selectionEnd);
+          } else {
+            copiedText = input.value;
+          }
+        } else if (window.getSelection) {
+          copiedText = window.getSelection().toString();
+        }
+        const targetInfo = e.target.tagName.toLowerCase() +
+          (e.target.id ? '#' + e.target.id : '') +
+          (e.target.className ? '.' + e.target.className.replace(/ /g, '.') : '');
+
+        const eventData = {
+          type: 'copy',
+          timestamp: new Date().toISOString(),
+          copiedText: copiedText,
+          targetInfo: targetInfo,
+          url: window.location.href
+        };
+
+        chrome.runtime.sendMessage({ action: "recordEvent", eventData });
+      }
+    });
+  });
+
   // Enhanced keydown event listener to capture additional text input details
   document.addEventListener('keydown', function(e) {
     chrome.storage.local.get(["recording"], (result) => {
