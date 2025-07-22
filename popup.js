@@ -323,26 +323,12 @@ Most clicked elements: ${Object.entries(analysis.clicksByElement).slice(0, 5).ma
 
 Most used keys: ${Object.entries(analysis.keyboardStats.mostUsedKeys).slice(0, 10).map(([key, count]) => `- "${key}": ${count} times`).join('\n')}
 
-REQUIRED ANALYSIS:
-1. **CHEATING RISK ASSESSMENT**: Provide a risk score (LOW/MEDIUM/HIGH) based on:
-   - Time spent outside exam browser (high risk if >10% of total time)
-   - Unauthorized website access
-   - Suspicious copy-paste patterns (Ctrl+C, Ctrl+V frequency)
-   - Tab switching behavior
-   - Unusual typing patterns
+ANALYSIS GOALS:
+1. Assign cheating risk level based on behavior patterns.
+2. Highlight any access to unauthorized sites or tools.
+3. Flag the session for review if integrity concerns are detected.
 
-2. **VIOLATION DETECTION**: Flag potential violations:
-   - External resource access (non-exam websites)
-   - Communication attempts (social media, messaging)
-   - Search engine usage
-   - File access patterns
-   - Screen sharing or recording software usage
-
-3. **DETAILED FINDINGS**: List all websites visited and typed content for manual review
-
-4. **RECOMMENDATION**: Should this exam session be flagged for academic integrity review?
-
-Provide a clear, objective assessment focusing on academic integrity violations and suspicious behavior patterns.`;
+Return a short summary of the key findings, risk level, and flag recommendation.`;
 }
 
 // Function to display AI summary in a modal
